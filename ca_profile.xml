@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CommunityApplications>
+  <Profile>Timetable for Unraid shows everything scheduled on your server and warns when jobs overlap. Support and questions: the GitHub issues of this repository.</Profile>
+  <Icon>https://raw.githubusercontent.com/luuvasara/unraid-timetable/main/icon.png</Icon>
+  <WebPage>https://github.com/luuvasara/unraid-timetable</WebPage>
+</CommunityApplications>

@@ -1,0 +1,2 @@
+# a line no plugin wrote
+17 2 * * * /usr/local/bin/my-own-thing --quiet

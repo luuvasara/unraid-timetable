@@ -1,0 +1,2 @@
+# Generated cron schedule for user.scripts
+40 3 * * 3 /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/nightly-rsync/script > /dev/null 2>&1

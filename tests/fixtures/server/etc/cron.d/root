@@ -1,0 +1,23 @@
+# Generated system monitoring schedule:
+*/1 * * * * /usr/local/emhttp/plugins/dynamix/scripts/monitor &> /dev/null
+
+# Generated mover schedule:
+40 3 * * * /usr/local/sbin/mover start > /dev/null 2> >(logger -t move)
+# Generated parity check schedule:
+0 1 * * 0 [[ $(date +%e) -le 7 ]] && /usr/local/sbin/mdcmd check NOCORRECT &> /dev/null || :
+# Generated TRIM schedule:
+0 4 * * 0 /usr/local/emhttp/plugins/dynamix/scripts/ssd_trim cron|logger &> /dev/null
+# Generated Unraid OS update check schedule:
+11 0 * * 1 /usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/unraidcheck &> /dev/null
+
+# Generated cron schedule for user.scripts
+40 3 * * 3 /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/nightly-rsync/script > /dev/null 2>&1
+# Appdata.Backup cron settings
+0 3 * * 0 php /usr/local/emhttp/plugins/appdata.backup/scripts/backup.php > /dev/null 2>&1
+# Generated cron settings for docker autoupdates
+0 3 * * 0 /usr/local/emhttp/plugins/ca.update.applications/scripts/updateDocker.php >/dev/null 2>&1
+# Generated schedules for parity.check.tuning
+15 0 * * * /usr/local/emhttp/plugins/parity.check.tuning/parity.check.tuning.php "resume" &> /dev/null
+30 7 * * * /usr/local/emhttp/plugins/parity.check.tuning/parity.check.tuning.php "pause" &> /dev/null
+*/7 * * * * /usr/local/emhttp/plugins/parity.check.tuning/parity.check.tuning.php "monitor" &>/dev/null
+30 2 * * 6 /usr/local/bin/hand-added-backup.sh

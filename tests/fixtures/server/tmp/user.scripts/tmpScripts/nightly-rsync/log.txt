@@ -1,0 +1,5 @@
+Script Starting Nov 11, 2026  03:40.01
+
+Full logs for this script are available at /tmp/user.scripts/tmpScripts/nightly-rsync/log.txt
+
+Script Finished Nov 11, 2026  04:05.31

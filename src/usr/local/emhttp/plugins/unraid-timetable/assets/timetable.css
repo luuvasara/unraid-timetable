@@ -1,0 +1,187 @@
+/* Timetable. The chart sits on a card of its own, so its colours are checked against one light and one dark surface
+ * (.tt-dark is set by the page from the Unraid theme: black and gray are dark, white and azure light; the browser's
+ * dark-mode setting says nothing about the Unraid theme). Text outside the card uses the theme's own colours, with
+ * fallbacks for releases without theme variables. Category colours from a palette checked for colour-blind
+ * separation; severity is told by an icon, a word and a hatch pattern, never by colour alone. */
+
+/* Plain rules, no @layer: Unraid's own stylesheets are unlayered, and unlayered rules beat layered ones. */
+
+  .tt {
+    /* primitives */
+    --tt-p-blue: #2a78d6; --tt-p-orange: #eb6834; --tt-p-aqua: #1baf7a; --tt-p-yellow: #eda100;
+    --tt-p-magenta: #e87ba4; --tt-p-green: #008300; --tt-p-violet: #6250d6; --tt-p-grey: #898781;
+    --tt-p-blue-o: #276ec5; --tt-p-orange-o: #b34f28; --tt-p-aqua-o: #137e58; --tt-p-yellow-o: #936400;
+    --tt-p-magenta-o: #a25673; --tt-p-green-o: #008000; --tt-p-violet-o: #6250d6; --tt-p-grey-o: #6e6c67;
+    /* semantic, light card */
+    --tt-card: #fcfcfb;
+    --tt-ink: #0b0b0b;
+    --tt-ink-2: #52514e;
+    --tt-grid: #e1e0d9;
+    --tt-base: #c3c2b7;
+    --tt-warn: #8a4b00;
+    --tt-info: #52514e;
+    --tt-cell: 42, 120, 214;
+    /* text outside the card follows the theme */
+    --tt-text-muted: color-mix(in srgb, var(--text-color, currentColor) 72%, var(--background-color, transparent));
+    --tt-line: var(--table-border-color, var(--border-color, rgba(127, 127, 127, 0.35)));
+    --tt-surface: var(--mild-background-color, rgba(127, 127, 127, 0.08));
+  }
+  .tt.tt-dark {
+    --tt-p-blue: #3987e5; --tt-p-orange: #d95926; --tt-p-aqua: #199e70; --tt-p-yellow: #c98500;
+    --tt-p-magenta: #d55181; --tt-p-green: #008300; --tt-p-violet: #9085e9; --tt-p-grey: #898781;
+    --tt-p-blue-o: #3987e5; --tt-p-orange-o: #d95926; --tt-p-aqua-o: #199e70; --tt-p-yellow-o: #c98500;
+    --tt-p-magenta-o: #d55181; --tt-p-green-o: #2b9a2b; --tt-p-violet-o: #9085e9; --tt-p-grey-o: #a3a19b;
+    --tt-card: #1d1b1b;
+    --tt-ink: #f0efec;
+    --tt-ink-2: #c3c2b7;
+    --tt-grid: #2c2c2a;
+    --tt-base: #383835;
+    --tt-warn: #fab219;
+    --tt-info: #c3c2b7;
+    --tt-cell: 57, 135, 229;
+  }
+  .tt .tt-c-parity { --tt-fill: var(--tt-p-blue); --tt-edge: var(--tt-p-blue-o); }
+  .tt .tt-c-mover { --tt-fill: var(--tt-p-orange); --tt-edge: var(--tt-p-orange-o); }
+  .tt .tt-c-backup { --tt-fill: var(--tt-p-aqua); --tt-edge: var(--tt-p-aqua-o); }
+  .tt .tt-c-update { --tt-fill: var(--tt-p-yellow); --tt-edge: var(--tt-p-yellow-o); }
+  .tt .tt-c-scripts { --tt-fill: var(--tt-p-magenta); --tt-edge: var(--tt-p-magenta-o); }
+  .tt .tt-c-trim { --tt-fill: var(--tt-p-green); --tt-edge: var(--tt-p-green-o); }
+  .tt .tt-c-checks { --tt-fill: var(--tt-p-violet); --tt-edge: var(--tt-p-violet-o); }
+  .tt .tt-c-other, .tt .tt-c-sleep { --tt-fill: var(--tt-p-grey); --tt-edge: var(--tt-p-grey-o); }
+
+  .tt { max-width: 1400px; }
+  .tt p { margin: 0.6rem 0; }
+  .tt a.tt-go { color: inherit; text-decoration: underline; }
+  .tt a.tt-go:focus-visible, .tt .tt-scroll:focus-visible, .tt .tt-dp:focus-visible { outline: 3px solid var(--tt-warn); outline-offset: 2px; }
+  .tt .tt-h { margin: 2.4rem 0 0.6rem; font-size: 1.5rem; font-weight: 600; text-transform: none; letter-spacing: normal; }
+  .tt .tt-count { font-weight: 400; color: var(--tt-text-muted); font-size: 1.3rem; }
+  .tt .tt-muted { color: var(--tt-text-muted); }
+  .tt .tt-ok { padding: 0.8rem 1.2rem; border: 1px solid var(--tt-line); border-radius: 4px; }
+  .tt .tt-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .tt .tt-tnum { font-variant-numeric: tabular-nums; }
+  .tt code, .tt .tt-path { overflow-wrap: anywhere; }
+
+  /* findings */
+  .tt .tt-flist { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.8rem; }
+  .tt .tt-f { display: flex; gap: 1.2rem; padding: 1rem 1.2rem; border: 1px solid var(--tt-line); border-left-width: 4px; border-radius: 4px; background: var(--tt-surface); }
+  .tt .tt-f-warning { border-left-style: solid; border-left-color: var(--brand-orange, #e8a33d); }
+  .tt .tt-f-info { border-left-style: dashed; }
+  .tt .tt-sev { flex: 0 0 8rem; font-weight: 600; white-space: nowrap; }
+  .tt .tt-f-warning .tt-sev .fa { color: var(--brand-orange, #e8a33d); }
+  .tt .tt-fbody { min-width: 0; flex: 1; }
+  .tt .tt-fbody p { margin: 0.2rem 0; }
+  .tt .tt-ftitle { font-weight: 600; }
+  .tt .tt-when { font-variant-numeric: tabular-nums; }
+
+  /* day picker */
+  .tt .tt-daypick { display: flex; flex-wrap: wrap; gap: 0.4rem; margin: 0.8rem 0; }
+  .tt .tt-daypick[hidden] { display: none; }
+  .tt .tt-daypick .tt-dp { all: unset; box-sizing: border-box; min-height: 3.2rem; min-width: 4.8rem; padding: 0.4rem 1rem; text-align: center; cursor: pointer;
+    border: 1px solid var(--tt-line); border-radius: 4px; font-variant-numeric: tabular-nums; }
+  .tt .tt-daypick .tt-dp[aria-selected="true"] { font-weight: 700; border-color: currentColor; box-shadow: inset 0 -3px 0 currentColor; }
+  .tt .tt-dayh { margin: 1.2rem 0 0.4rem; font-size: 1.3rem; font-weight: 600; }
+  .tt.tt-js .tt-day[hidden] { display: none; }
+  .tt.tt-js .tt-dayh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+
+  /* the chart card */
+  .tt .tt-scroll { overflow-x: auto; background: var(--tt-card); color: var(--tt-ink); border: 1px solid var(--tt-base); border-radius: 8px; }
+  .tt .tt-chart { display: grid; grid-template-columns: 17rem minmax(64rem, 1fr); grid-auto-rows: minmax(2.6rem, auto); position: relative; padding: 0.4rem 1.2rem 0.8rem 0; }
+  .tt .tt-lab, .tt .tt-grp { position: sticky; left: 0; z-index: 3; background: var(--tt-card); padding: 0 0.8rem 0 1.2rem; display: flex; align-items: center; gap: 0.6rem;
+    font-size: 1.2rem; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--tt-ink); }
+  .tt .tt-lab { display: block; line-height: 2.6rem; }
+  .tt .tt-grp { grid-column: 1 / -1; font-weight: 600; min-height: 2.8rem; border-top: 1px solid var(--tt-grid); position: sticky; }
+  .tt .tt-axl { color: var(--tt-ink-2); font-size: 1.1rem; }
+  .tt .tt-axis { position: relative; height: 2.4rem; border-bottom: 1px solid var(--tt-base); font-size: 1.1rem; color: var(--tt-ink-2); font-variant-numeric: tabular-nums; }
+  .tt .tt-tick { position: absolute; bottom: 0.4rem; transform: translateX(-50%); }
+  .tt .tt-tick:first-child { transform: none; }
+  .tt .tt-tick:last-child { transform: translateX(-100%); }
+  .tt .tt-track { position: relative; height: 2.6rem;
+    background-image: linear-gradient(to right, var(--tt-grid) 1px, transparent 1px); background-size: calc(100% / 8) 100%; }
+  /* the overlap bands and the now line lie over the plot column, outside the grid flow */
+  .tt .tt-over { position: absolute; top: 2.8rem; bottom: 0.8rem; left: 17rem; right: 1.2rem; pointer-events: none; z-index: 1; }
+  .tt .tt-track, .tt .tt-axis { grid-column: 2; z-index: 2; }
+  .tt .tt-band { position: absolute; top: 0; bottom: 0; pointer-events: auto; }
+  .tt .tt-band-warning { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--tt-warn) 34%, transparent) 0 3px, transparent 3px 7px); border-left: 1px solid var(--tt-warn); border-right: 1px solid var(--tt-warn); }
+  .tt .tt-band-info { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--tt-info) 22%, transparent) 0 2px, transparent 2px 8px); border-left: 1px dashed var(--tt-info); border-right: 1px dashed var(--tt-info); }
+  .tt .tt-now { position: absolute; top: -2.4rem; bottom: 0; width: 0; border-left: 2px solid var(--tt-ink); box-shadow: 0 0 0 2px var(--tt-card); z-index: 4; }
+  .tt .tt-nowflag { position: absolute; top: 0; left: 0.3rem; font-size: 1.1rem; font-weight: 600; background: var(--tt-card); padding: 0 0.3rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+
+  /* bars: measured = solid; estimated = solid start, hatched end; unknown = dashed outline only */
+  .tt .tt-bar { position: absolute; top: 0.4rem; height: 1.8rem; min-width: 6px; box-sizing: border-box; border-radius: 0 4px 4px 0;
+    background: var(--tt-fill); border: 1px solid var(--tt-edge); display: flex; align-items: center; justify-content: flex-end; font-size: 1.1rem; color: var(--tt-ink); }
+  .tt .tt-bar.tt-est { background: linear-gradient(to right, var(--tt-fill) 0 6px, transparent 6px),
+    repeating-linear-gradient(45deg, var(--tt-fill) 0 3px, color-mix(in srgb, var(--tt-fill) 30%, var(--tt-card)) 3px 6px); }
+  .tt .tt-bar.tt-unk { background: linear-gradient(to right, var(--tt-fill) 0 6px, transparent 6px); border: 1.5px dashed var(--tt-edge); border-radius: 0; }
+  .tt .tt-bar.tt-cutl { border-left-style: dotted; }
+  .tt .tt-bar.tt-cutr { border-right-style: dotted; border-radius: 0; }
+  .tt .tt-bar.tt-hit-warning { outline: 2px dashed var(--tt-warn); outline-offset: 2px; }
+  .tt .tt-bar.tt-hit-info { outline: 1px dashed var(--tt-info); outline-offset: 2px; }
+  .tt .tt-bar .fa { position: absolute; right: -1.7rem; color: var(--tt-warn); background: var(--tt-card); border-radius: 50%; }
+  .tt .tt-bar.tt-hit-info .fa { color: var(--tt-info); }
+  .tt .tt-dense { position: absolute; left: 0; right: 0; top: 0.9rem; height: 0.8rem; opacity: 0.55;
+    background: repeating-linear-gradient(to right, var(--tt-fill) 0 1px, transparent 1px 4px); }
+  .tt .tt-densel { position: absolute; left: 0.6rem; top: 0.2rem; font-size: 1.1rem; background: var(--tt-card); padding: 0 0.4rem; color: var(--tt-ink-2); white-space: nowrap; }
+
+  /* swatches and legend */
+  .tt .tt-sw { display: inline-block; width: 1.2rem; height: 1.2rem; border-radius: 2px; background: var(--tt-fill); border: 1px solid var(--tt-edge); vertical-align: -0.1rem; margin-right: 0.6rem; flex: none; }
+  .tt .tt-legend { display: flex; flex-wrap: wrap; gap: 0.8rem 1.6rem; margin: 0.8rem 0 0; padding: 0.8rem 1.2rem; font-size: 1.2rem; background: var(--tt-card); color: var(--tt-ink); border: 1px solid var(--tt-base); border-radius: 8px; }
+  .tt .tt-legend > span { display: inline-flex; align-items: center; gap: 0.4rem; }
+  .tt .tt-key { display: inline-block; width: 2.4rem; height: 1.2rem; box-sizing: border-box; --tt-fill: var(--tt-p-blue); --tt-edge: var(--tt-p-blue-o); }
+  .tt .tt-key.tt-known { background: var(--tt-fill); border: 1px solid var(--tt-edge); }
+  .tt .tt-key.tt-est { background: linear-gradient(to right, var(--tt-fill) 0 6px, transparent 6px), repeating-linear-gradient(45deg, var(--tt-fill) 0 3px, color-mix(in srgb, var(--tt-fill) 30%, var(--tt-card)) 3px 6px); border: 1px solid var(--tt-edge); }
+  .tt .tt-key.tt-unk { background: linear-gradient(to right, var(--tt-fill) 0 6px, transparent 6px); border: 1.5px dashed var(--tt-edge); }
+  .tt .tt-key.tt-kband-warning { background: repeating-linear-gradient(45deg, color-mix(in srgb, var(--tt-warn) 34%, transparent) 0 3px, transparent 3px 7px); border: 1px solid var(--tt-warn); }
+  .tt .tt-key.tt-kband-info { background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--tt-info) 22%, transparent) 0 2px, transparent 2px 8px); border: 1px dashed var(--tt-info); }
+  .tt .tt-legend .fa-exclamation-triangle { color: var(--tt-warn); }
+
+  /* week grid */
+  .tt .tt-week { border-collapse: separate; border-spacing: 2px; margin: 0.6rem; font-size: 1.1rem; font-variant-numeric: tabular-nums; color: var(--tt-ink); background: transparent; width: auto; }
+  .tt .tt-week th { font-weight: 400; color: var(--tt-ink-2); padding: 0 0.4rem; text-align: left; white-space: nowrap; background: transparent; text-transform: none; }
+  .tt .tt-week td { width: 2.4rem; min-width: 2.4rem; height: 2.4rem; padding: 0; border-radius: 3px; text-align: center; font-weight: 700; border: 1px solid var(--tt-grid); }
+  .tt .tt-week td.tt-l0 { background: transparent; }
+  .tt .tt-week td.tt-l1 { background: rgba(var(--tt-cell), 0.25); }
+  .tt .tt-week td.tt-l2 { background: rgba(var(--tt-cell), 0.45); }
+  .tt .tt-week td.tt-l3 { background: rgba(var(--tt-cell), 0.7); }
+  .tt .tt-week td.tt-l4 { background: rgba(var(--tt-cell), 0.95); }
+  .tt .tt-week td.tt-ov { background-image: repeating-linear-gradient(45deg, color-mix(in srgb, var(--tt-warn) 55%, transparent) 0 2px, transparent 2px 5px); border-color: var(--tt-warn); color: var(--tt-warn); }
+
+  .tt .tt-later, .tt .tt-next, .tt .tt-ctx { margin: 0.4rem 0; padding-left: 2rem; }
+  .tt .tt-later li, .tt .tt-next li, .tt .tt-ctx li { margin: 0.4rem 0; }
+  .tt .tt-later { list-style: none; padding-left: 0; }
+  .tt .tt-note { color: var(--tt-text-muted); }
+
+  /* job table: plain rows on a wide screen, one card per job on a phone */
+  .tt .tt-tablewrap { overflow-x: auto; }
+  .tt table.tt-jobs { width: 100%; border-collapse: collapse; font-size: 1.2rem; }
+  .tt table.tt-jobs th { text-align: left; font-weight: 600; padding: 0.6rem; border-bottom: 1px solid var(--tt-line); text-transform: none; }
+  .tt table.tt-jobs td { vertical-align: top; padding: 0.6rem; border-bottom: 1px solid var(--tt-line); white-space: normal; overflow-wrap: anywhere; height: auto; line-height: 1.5; }
+  .tt table.tt-jobs td:last-child { white-space: nowrap; overflow-wrap: normal; }
+  .tt table.tt-jobs td:last-child a.tt-go { display: inline-block; min-height: 2.4rem; min-width: 2.4rem; line-height: 2.4rem; padding: 0 0.4rem; }
+  /* Unraid gives every table cell a fixed 2.6rem line and height, and tables a 1000px minimum on some widths */
+  .tt table { min-width: 0; }
+  .tt table.tt-week td { line-height: 2.4rem; }
+  .tt p, .tt li { text-align: left; }
+
+  @media (max-width: 767px) {
+    .tt .tt-f { flex-direction: column; gap: 0.4rem; }
+    .tt .tt-sev { flex: none; }
+    .tt .tt-chart { grid-template-columns: 11rem minmax(64rem, 1fr); }
+    .tt .tt-over { left: 11rem; }
+    .tt table.tt-jobs, .tt table.tt-jobs tbody, .tt table.tt-jobs tr, .tt table.tt-jobs td { display: block; width: auto; }
+    .tt table.tt-jobs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .tt table.tt-jobs tr { border: 1px solid var(--tt-line); border-radius: 4px; margin: 0.8rem 0; padding: 0.4rem 0; }
+    .tt table.tt-jobs td { border: 0; padding: 0.3rem 1rem; }
+    .tt table.tt-jobs td:not(:first-child)::before { content: attr(data-h) ": "; font-weight: 600; }
+  }
+  @media (forced-colors: active) {
+    .tt .tt-bar, .tt .tt-sw, .tt .tt-key { border: 1px solid CanvasText; }
+  }
+  @media print {
+    .tt .tt-scroll { overflow: visible; }
+    .tt .tt-bar, .tt .tt-week td { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+    .tt.tt-js .tt-day[hidden] { display: block; }
+    .tt .tt-daypick { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .tt *, .tt *::before, .tt *::after { animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
+  }

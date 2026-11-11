@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Plugin>
+  <Name>Timetable</Name>
+  <PluginURL>https://raw.githubusercontent.com/luuvasara/unraid-timetable/main/unraid-timetable.plg</PluginURL>
+  <Support>https://github.com/luuvasara/unraid-timetable/issues</Support>
+  <Project>https://github.com/luuvasara/unraid-timetable</Project>
+  <Icon>https://raw.githubusercontent.com/luuvasara/unraid-timetable/main/icon.png</Icon>
+  <Category>Tools:System</Category>
+  <MinVer>6.12.0</MinVer>
+  <License>GPL-2.0</License>
+  <ReadMe>https://github.com/luuvasara/unraid-timetable#readme</ReadMe>
+  <ExtraSearchTerms>schedule scheduler cron calendar timeline overlap mover parity trim user scripts backup</ExtraSearchTerms>
+  <Overview>Everything scheduled on your server in one place: the parity check, the mover, TRIM, User Scripts, Appdata Backup, auto updates and every other line in the crontab, on a timeline of the next 7 days and in a list with the file each job comes from.
+
+It warns when jobs overlap where it matters, for example the mover running during a parity check, or a backup stopping containers while the mover works, and says why each one matters.
+
+- Run lengths come from the server's own history where there is one.
+- Each job links to the page where it is set up.
+
+It only reads. It never changes a setting or runs a job.</Overview>
+</Plugin>

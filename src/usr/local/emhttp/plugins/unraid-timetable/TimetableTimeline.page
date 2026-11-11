@@ -1,0 +1,20 @@
+Menu="Timetable:1"
+Title="Timeline"
+Tag="calendar"
+Markdown="false"
+---
+<?php
+/* Timeline: findings first, then each of the next 7 days, the week grid and later runs. Rendered on the server by
+ * include/Render.php; assets/timetable.js only switches the day shown. Read-only: no form, no POST. */
+$tt_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-timetable';
+require_once "$tt_root/include/Render.php";
+$tt_v = substr(md5((string)@md5_file("$tt_root/assets/timetable.js") . @md5_file("$tt_root/assets/timetable.css")), 0, 10);
+$tt_view = new TtView($docroot ?? '/usr/local/emhttp', $display ?? []);
+$tt_dark = in_array($display['theme'] ?? '', ['black', 'gray'], true);
+?>
+<link rel="stylesheet" href="/plugins/unraid-timetable/assets/timetable.css?v=<?=$tt_v?>">
+<div class="tt<?=$tt_dark ? ' tt-dark' : ''?>" id="tt-timeline">
+<?=$tt_view->timeline()?>
+<?=$tt_view->offClock()?>
+</div>
+<script src="/plugins/unraid-timetable/assets/timetable.js?v=<?=$tt_v?>"></script>

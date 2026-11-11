@@ -1,0 +1,15 @@
+Menu="Timetable:2"
+Title="List"
+Tag="list"
+Markdown="false"
+---
+<?php
+/* List: the next runs and every job with its source file and line, its schedule and its expected length. */
+$tt_root = ($docroot ?? '/usr/local/emhttp') . '/plugins/unraid-timetable';
+require_once "$tt_root/include/Render.php";
+$tt_view = new TtView($docroot ?? '/usr/local/emhttp', $display ?? []);
+$tt_dark = in_array($display['theme'] ?? '', ['black', 'gray'], true);
+?>
+<div class="tt<?=$tt_dark ? ' tt-dark' : ''?>" id="tt-list">
+<?=$tt_view->listView()?>
+</div>

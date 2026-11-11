@@ -1,0 +1,75 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "unraid-timetable">
+  <!ENTITY author    "Timetable project">
+  <!ENTITY version   "2026.11.12f">
+  <!ENTITY gitURL    "https://raw.githubusercontent.com/luuvasara/unraid-timetable/main">
+  <!ENTITY pluginURL "&gitURL;/&name;.plg">
+  <!ENTITY pkg       "&name;-&version;-x86_64-1.txz">
+  <!ENTITY pkgURL    "&gitURL;/packages/&pkg;">
+  <!ENTITY md5       "3a7e3e485f1c77e09d469ad8d97a6aab">
+]>
+<!-- A read-only overview of everything scheduled on the server, with warnings when jobs overlap or clash.
+     Bump &version; on EVERY change (YYYY.MM.DD plus an optional letter); build.sh fills in &md5;.
+     Built from the shared plugin kit in kit/. -->
+<PLUGIN name="&name;" author="&author;" version="&version;" min="6.12.0" icon="timetable.png"
+        launch="Settings/Timetable" pluginURL="&pluginURL;" support="https://github.com/luuvasara/unraid-timetable/issues">
+
+<CHANGES>
+###2026.11.12f
+- First release.
+- Settings, Timetable shows every scheduled job on the server: Unraid's parity check, mover, TRIM and checks, User Scripts, Appdata Backup, auto updates, Fix Common Problems, Parity Check Tuning, Mover Tuning, S3 Sleep, and any other line in the crontab.
+- Timeline: the next 7 days, one row per job, from the start to the expected end; the week at a glance; and the runs later in the month.
+- List: the next 10 runs, and every job with the file and line it comes from, when it runs and how long it takes.
+- Findings: jobs that overlap where it matters, such as the mover during a parity check or a backup that stops containers while the mover runs, each with the reason and an example.
+- The length of a run comes from the server's own history where there is one (parity check history, the system log, the plugins' logs); otherwise the assumption is shown.
+- Read-only: it changes no setting and runs nothing. Each job links to the page where it is set up.
+</CHANGES>
+
+<!-- Pre-install: note what this run is for the message at the end, drop older packages. -->
+<FILE Run="/bin/bash">
+<INLINE>
+mkdir -p /boot/config/plugins/&name; /var/run/&name;
+OLD=
+for f in /var/log/packages/&name;-*-x86_64-1; do
+  if [ -e "$f" ]; then OLD=${f##*/&name;-}; OLD=${OLD%-x86_64-1}; fi
+done
+if [ -n "$OLD" ]; then echo "update $OLD"
+elif [ -e /boot/config/plugins/&name;.plg ]; then echo boot
+else echo fresh
+fi &gt;/var/run/&name;/install-from
+for f in /boot/config/plugins/&name;/&name;-*-x86_64-1.txz; do
+  case $f in */&name;-&version;-x86_64-1.txz) ;; *) if [ -f "$f" ]; then rm -f "$f"; fi ;; esac
+done
+exit 0
+</INLINE>
+</FILE>
+
+<!-- The package. -->
+<FILE Name="/boot/config/plugins/&name;/&pkg;" Run="upgradepkg --install-new --reinstall">
+<URL>&pkgURL;</URL>
+<MD5>&md5;</MD5>
+</FILE>
+
+<!-- Post-install, also at every boot: the message. There is no daemon and nothing to start. -->
+<FILE Run="/bin/bash">
+<INLINE>
+MODE=; OLD=
+read -r MODE OLD 2&gt;/dev/null &lt;/var/run/&name;/install-from
+FIRST_RUN="Settings, Timetable shows what is scheduled on this server and what overlaps." \
+  /usr/local/emhttp/plugins/&name;/kit/install-notes.sh "&version;" "$MODE" "$OLD"
+rm -f /var/run/&name;/install-from
+</INLINE>
+</FILE>
+
+<!-- Remove: the package. It keeps no settings; the folder on the flash drive held only the package. -->
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+removepkg &name;-&version;-x86_64-1 >/dev/null 2>&amp;1
+rm -rf /usr/local/emhttp/plugins/&name; /var/run/&name;
+rm -rf /boot/config/plugins/&name;
+echo "Timetable removed."
+</INLINE>
+</FILE>
+
+</PLUGIN>

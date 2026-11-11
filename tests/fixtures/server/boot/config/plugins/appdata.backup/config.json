@@ -1,0 +1,2 @@
+{"destination": "/mnt/user/backups/appdata", "backupMethod": "oneAfterTheOther", "backupFrequency": "weekly",
+ "containerSettings": {"plex": {"skip": "no", "dontStop": "no"}, "db": {"skip": "no", "dontStop": "yes"}, "old": {"skip": "yes", "dontStop": "no"}}}

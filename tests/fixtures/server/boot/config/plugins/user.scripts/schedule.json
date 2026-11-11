@@ -1,0 +1,3 @@
+{"\/boot\/config\/plugins\/user.scripts\/scripts\/nightly-rsync\/script":{"script":"\/boot\/config\/plugins\/user.scripts\/scripts\/nightly-rsync\/script","frequency":"custom","id":"schedule0","custom":"40 3 * * 3"},
+ "\/boot\/config\/plugins\/user.scripts\/scripts\/array-start-note\/script":{"script":"\/boot\/config\/plugins\/user.scripts\/scripts\/array-start-note\/script","frequency":"start","id":"schedule1","custom":""},
+ "\/boot\/config\/plugins\/user.scripts\/scripts\/daily-report\/script":{"script":"\/boot\/config\/plugins\/user.scripts\/scripts\/daily-report\/script","frequency":"daily","id":"schedule2","custom":""}}

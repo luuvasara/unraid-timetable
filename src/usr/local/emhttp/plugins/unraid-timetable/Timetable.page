@@ -1,0 +1,7 @@
+Menu="Utilities"
+Type="xmenu"
+Title="Timetable"
+Icon="timetable.png"
+Tag="calendar"
+Tabs="true"
+---

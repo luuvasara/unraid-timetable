@@ -1,0 +1,2 @@
+# Generated TRIM schedule:
+0 4 * * 0 /usr/local/emhttp/plugins/dynamix/scripts/ssd_trim cron|logger &> /dev/null
