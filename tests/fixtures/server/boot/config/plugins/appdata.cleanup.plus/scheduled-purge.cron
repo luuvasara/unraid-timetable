@@ -1,0 +1,2 @@
+# Appdata Cleanup Plus purge timer
+17 * * * * php /usr/local/emhttp/plugins/appdata.cleanup.plus/scripts/scheduled-purge.php 2>&1 >/dev/null | /usr/bin/logger -t appdata-cleanup-plus

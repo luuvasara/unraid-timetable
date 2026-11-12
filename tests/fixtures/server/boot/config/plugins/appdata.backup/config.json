@@ -1,2 +1,7 @@
 {"destination": "/mnt/user/backups/appdata", "backupMethod": "oneAfterTheOther", "backupFrequency": "weekly",
- "containerSettings": {"plex": {"skip": "no", "dontStop": "no"}, "db": {"skip": "no", "dontStop": "yes"}, "old": {"skip": "yes", "dontStop": "no"}}}
+ "defaults": {"skip": "no", "dontStop": "no"},
+ "containerOrder": ["db", "plex", "sonarr", "radarr", "prowlarr", "bazarr", "homeassistant", "nextcloud", "photos", "jellyfin", "downloads", "paperless", "passwords", "old"],
+ "containerSettings": {"plex": {"skip": "no", "dontStop": "no"}, "db": {"skip": "no", "dontStop": "yes"}, "old": {"skip": "yes", "dontStop": "no"},
+  "sonarr": {"skip": "", "dontStop": ""}, "radarr": {"skip": "no", "dontStop": ""}, "prowlarr": {"skip": "no", "dontStop": "no"}, "bazarr": {"skip": "no", "dontStop": "no"},
+  "homeassistant": {"skip": "no", "dontStop": "no"}, "nextcloud": {"skip": "no", "dontStop": "no"}, "photos": {"skip": "no", "dontStop": "no"},
+  "jellyfin": {"skip": "no", "dontStop": "no"}, "downloads": {"skip": "no", "dontStop": "no"}, "paperless": {"skip": "no", "dontStop": "no"}, "passwords": {"skip": "no", "dontStop": "no"}}}

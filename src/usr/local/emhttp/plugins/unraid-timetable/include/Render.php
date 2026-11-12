@@ -76,7 +76,8 @@ final class TtView
     /** Row-label tooltip: the title, plus a User Script's own description when it has one. */
     private static function tip(array $j): string
     {
-        return $j['title'] . (!empty($j['description']) ? ': ' . $j['description'] : '');
+        return $j['title'] . (!empty($j['description']) ? ': ' . $j['description'] : '')
+            . (!empty($j['stops']) ? ': ' . TtAnalyse::stopsText($j['stops'], $j['stopsAt'] ?? null) : '');
     }
 
     public static function dur(int $sec): string
@@ -97,7 +98,8 @@ final class TtView
     {
         $url = $j['link'] ?? null;
         $text = $text !== '' ? $text : 'Settings';
-        if (!$url) return '';
+        // only the fixed internal pages this plugin builds; a pool name is the one query value, already URL-encoded
+        if (!$url || !preg_match('#^/(Settings|Main|Utilities)(/[A-Za-z0-9._-]+)*(\?name=[A-Za-z0-9%._~-]+)?$#', $url)) return '';
         $need = self::NEEDS[$url] ?? null;
         if ($need !== null && !is_dir("$this->docroot/plugins/$need")) return '';
         $tab = $this->tabFor($j);
@@ -208,7 +210,14 @@ final class TtView
         $label = date('l j F', $ds);
         $o = '<section class="tt-day" data-day="' . $i . '" aria-label="' . self::h($label) . '"><h4 class="tt-dayh">' . self::h($label) . '</h4>';
         if (!$rows && !$freq) return $o . '<p class="tt-muted">Nothing is scheduled on this day.</p></section>';
-        $o .= '<div class="tt-scroll" tabindex="0" role="region" aria-label="' . self::h("Jobs on $label, scrolls sideways") . '"><div class="tt-chart">';
+        $today = $m['now'] >= $ds && $m['now'] < $de;
+        $o .= '<div class="tt-scroll" tabindex="0" role="region" aria-label="' . self::h("Jobs on $label, scrolls sideways") . '"><div class="tt-chart' . ($today ? ' tt-today' : '') . '">';
+        // the now label has a strip of its own above the hour axis, so it never covers an hour; near the right end it
+        // points left
+        if ($today) {
+            $np = $pct($m['now']);
+            $o .= '<div class="tt-lab tt-nowlab" aria-hidden="true"></div><div class="tt-nowrow" aria-hidden="true"><span class="tt-nowflag' . ($np > 88 ? ' tt-flip' : '') . '" style="left:' . $np . '%">Now ' . self::h($this->time($m['now'])) . '</span></div>';
+        }
         // axis
         $o .= '<div class="tt-lab tt-axl">' . self::h(date('T', $ds)) . '</div><div class="tt-axis" aria-hidden="true">';
         for ($h = 0; $h <= 24; $h += 3) {
@@ -226,7 +235,7 @@ final class TtView
             $conflictIds[$a][] = [$s, $e, $sev]; $conflictIds[$b][] = [$s, $e, $sev];
             $o .= '<span class="tt-band tt-band-' . $sev . '" style="left:' . $pct($s) . '%;width:' . max(0.3, $pct($e) - $pct($s)) . '%" title="' . self::h($m['byId'][$a]['title'] . ' and ' . $m['byId'][$b]['title'] . ' overlap ' . $this->time($s) . '-' . $this->time($e)) . '"></span>';
         }
-        if ($m['now'] >= $ds && $m['now'] < $de) $o .= '<span class="tt-now" style="left:' . $pct($m['now']) . '%"><span class="tt-nowflag">Now ' . self::h($this->time($m['now'])) . '</span></span>';
+        if ($today) $o .= '<span class="tt-now" style="left:' . $pct($m['now']) . '%"></span>';
         $o .= '</div>';
         foreach (array_keys(self::CATS) as $cat) {
             if (empty($rows[$cat])) continue;

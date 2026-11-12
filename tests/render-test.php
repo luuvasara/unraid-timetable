@@ -49,6 +49,9 @@ ok(str_contains($t, 'href="/Settings/Userscripts"'), 'User Scripts link when the
 ok(!str_contains($t, '/Settings/AutoUpdateApps'), 'no link to a plugin page that is not installed');
 ok(str_contains($t, 'Later this month'), 'later runs listed');
 ok(preg_match_all('/class="tt-f tt-f-/', $t) >= 5, 'findings listed', preg_match_all('/class="tt-f tt-f-/', $t));
+ok(preg_match('#<div class="tt-nowrow"[^>]*><span class="tt-nowflag[^"]*" style="left:[0-9.]+%">Now 02:30</span></div>#', $t) === 1, 'the now label sits in its own strip above the hour axis');
+ok(!preg_match('#class="tt-axis"[^>]*>(?:(?!</div>).)*tt-nowflag#s', $t) && !preg_match('#class="tt-over"[^>]*>(?:(?!</div>).)*tt-nowflag#s', $t), 'the now label is not in the axis row or the overlay');
+ok(str_contains($t, 'title="Appdata backup: Stops 12 containers at 03:00: plex, sonarr'), 'appdata backup row tooltip names the containers it stops');
 $l = $html['list'];
 ok(str_contains($l, '/boot/config/plugins/dynamix/parity-check.cron:2'), 'source file and line in the list');
 ok(str_contains($l, 'Next 10 runs'), 'next runs');

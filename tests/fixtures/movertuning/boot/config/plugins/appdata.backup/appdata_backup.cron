@@ -1,0 +1,2 @@
+# Appdata.Backup cron settings
+0 5 * * 2 php /usr/local/emhttp/plugins/appdata.backup/scripts/backup.php > /dev/null 2>&1

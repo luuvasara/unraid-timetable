@@ -1,0 +1,7 @@
+<?xml version="1.0" standalone="yes"?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "ca.mover.tuning">
+  <!ENTITY version   "2026.11.07">
+]>
+<PLUGIN name="&name;" version="&version;">
+</PLUGIN>

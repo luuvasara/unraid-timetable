@@ -73,6 +73,13 @@ final class TtAnalyse
         foreach ($jobs as $j) $byId[$j['id']] = $j;
         $to = $now + $days * 86400;
         $win = self::windows($jobs, $now, $to);
+        // a line that is in two crontabs is one job running twice: the duplicate finding names it, pairs with itself do not
+        $alias = [];
+        foreach ($ctx['duplicates'] ?? [] as [$a, $b]) if (isset($byId[$a], $byId[$b])) $alias[$b] = $alias[$a] ?? $a;
+        $same = fn(string $a, string $b) => ($alias[$a] ?? $a) === ($alias[$b] ?? $b);
+        $startAt = [];
+        foreach ($win as [$id, $s, $e]) $startAt[$id][$s] = true;
+        $repeat = self::parityRepeats($jobs, $now, $to);
         $warn = [];
         $add = function (string $rule, string $a, string $b, int $s, int $e) use (&$warn) {
             $k = "$rule|$a|$b";
@@ -80,7 +87,20 @@ final class TtAnalyse
             $warn[$k]['count']++;
             $warn[$k]['starts'][] = $s;
         };
-        foreach (self::overlaps($win, $byId) as [$rule, $a, $b, $s, $e]) $add($rule, $a, $b, $s, $e);
+        foreach (self::overlaps($win, $byId) as [$rule, $a, $b, $s, $e]) {
+            if (($rule !== 'self' && $same($a, $b)) || ($rule === 'self' && isset($repeat[$a]))) continue;
+            $add($rule, $a, $b, $s, $e);
+        }
+        foreach ($repeat as $id => $r) $warn["parity-repeat|$id"] = ['rule' => 'parity-repeat', 'jobs' => [$id], 'window' => $r['window'], 'count' => $r['count'], 'starts' => $r['starts'],
+            'vars' => ['{dur}' => self::dur((int)$byId[$id]['duration']['sec']), '{gap}' => self::dur($r['gap'])]];
+        // Mover Tuning skips a scheduled mover that starts while a check runs: the overlap is then a skipped run, not a slow one
+        foreach ($warn as &$w) {
+            if ($w['rule'] !== 'mover-parity' || empty($byId[$w['jobs'][1]]['skipsDuringCheck'])) continue;
+            $inside = true;
+            foreach ($w['starts'] as $t) if (!isset($startAt[$w['jobs'][1]][$t])) $inside = false;
+            if ($inside) { $w['skipped'] = true; $w['vars'] = ['{setting}' => $byId[$w['jobs'][1]]['skipsDuringCheck']['setting']]; }
+        }
+        unset($w);
         // starts in the same minute: a job of unknown weight next to a heavy one
         $starts = [];
         foreach ($win as [$id, $s, $e]) if ($s >= $now) $starts[] = [$id, $s];
@@ -88,7 +108,7 @@ final class TtAnalyse
         for ($i = 0; $i < $n; $i++) {
             for ($k = $i + 1; $k < $n && $starts[$k][1] - $starts[$i][1] < self::SAME_START; $k++) {
                 $a = $byId[$starts[$i][0]]; $b = $byId[$starts[$k][0]];
-                if ($a['id'] === $b['id']) continue;
+                if ($same($a['id'], $b['id'])) continue;
                 $ua = self::unknownWeight($a); $ub = self::unknownWeight($b);
                 if (($ua && self::heavy($b)) || ($ub && self::heavy($a))) {
                     [$x, $y] = $ua ? [$b['id'], $a['id']] : [$a['id'], $b['id']];
@@ -100,7 +120,7 @@ final class TtAnalyse
         $clusters = [];
         for ($i = 0; $i < $n; $i++) {
             $ids = [];
-            for ($k = $i; $k < $n && $starts[$k][1] - $starts[$i][1] <= self::CLUSTER_SPAN; $k++) $ids[$starts[$k][0]] = true;
+            for ($k = $i; $k < $n && $starts[$k][1] - $starts[$i][1] <= self::CLUSTER_SPAN; $k++) $ids[$alias[$starts[$k][0]] ?? $starts[$k][0]] = true;
             if (count($ids) >= self::CLUSTER_MIN) {
                 $key = implode(',', array_keys($ids)) . '@' . date('H:i', $starts[$i][1]);
                 $clusters[$key] ??= ['rule' => 'cluster', 'jobs' => array_keys($ids), 'window' => [$starts[$i][1], $starts[$i][1] + self::CLUSTER_SPAN], 'count' => 0, 'starts' => []];
@@ -118,7 +138,7 @@ final class TtAnalyse
         $out = array_values($warn);
         // a cluster whose jobs are already named pair by pair in overlap findings adds nothing
         $paired = [];
-        foreach ($warn as $w) if ($w['rule'] !== 'same-start') { $paired[$w['jobs'][0] . '|' . $w['jobs'][1]] = true; $paired[$w['jobs'][1] . '|' . $w['jobs'][0]] = true; }
+        foreach ($warn as $w) if ($w['rule'] !== 'same-start' && count($w['jobs']) > 1) { $paired[$w['jobs'][0] . '|' . $w['jobs'][1]] = true; $paired[$w['jobs'][1] . '|' . $w['jobs'][0]] = true; }
         foreach ($bestAt as $c) {
             $all = true;
             foreach ($c['jobs'] as $x) foreach ($c['jobs'] as $y) if ($x !== $y && !isset($paired["$x|$y"])) $all = false;
@@ -137,17 +157,44 @@ final class TtAnalyse
             }
         }
         foreach ($ctx['unloaded'] ?? [] as $u) $out[] = ['rule' => 'not-loaded', 'jobs' => [], 'window' => null, 'count' => 1, 'file' => $u];
+        foreach (self::moverBlocked($jobs, $win) as $b) $out[] = $b;
+        foreach ($ctx['duplicates'] ?? [] as [$a, $b]) {
+            if (!isset($byId[$a], $byId[$b])) continue;
+            $src = fn($j) => $j['source']['live'] ?? ($j['source']['file'] . ($j['source']['line'] ? ':' . $j['source']['line'] : ''));
+            $out[] = ['rule' => 'duplicate', 'jobs' => [$a, $b], 'window' => null, 'count' => 2, 'sev' => !empty($byId[$a]['light']) && !empty($byId[$b]['light']) ? 'info' : 'warning',
+                'vars' => ['{a}' => $src($byId[$a]), '{b}' => $src($byId[$b])]];
+        }
+        if (!empty($ctx['staleLive'])) {
+            $ids = [];
+            foreach ($ctx['staleLive'] as $l) foreach ($jobs as $j) if (($j['source']['live'] ?? '') === $l['file'] . ':' . $l['line']) $ids[] = $j['id'];
+            $n = count($ctx['staleLive']);
+            $out[] = ['rule' => 'stale-live', 'jobs' => array_values(array_unique($ids)), 'window' => null, 'count' => $n,
+                'vars' => ['{lines}' => $n === 1 ? 'A crontab line is' : "$n crontab lines are", '{them}' => $n === 1 ? 'this line runs' : 'these lines run',
+                    '{list}' => implode('; ', array_map(fn($l) => $l['file'] . ':' . $l['line'] . ' "' . $l['text'] . '"', $ctx['staleLive']))]];
+        }
         // a server put to sleep by S3 Sleep runs no cron job until it wakes
         foreach ($jobs as $s3) {
             if (($s3['category'] ?? '') !== 'sleep' || empty($s3['sleep'])) continue;
             $skipH = array_flip($s3['sleep']['stopHour']); $skipD = array_flip($s3['sleep']['stopDay']);
-            $hit = [];
+            $hit = []; $during = [];
+            $off = fn(int $t) => isset($skipH[(int)date('G', $t)]) || isset($skipD[(int)date('w', $t)]);
             foreach ($win as [$id, $s, $e]) {
                 if ($s < $now || !empty($byId[$id]['light'])) continue;
-                if (isset($skipH[(int)date('G', $s)]) || isset($skipD[(int)date('w', $s)])) continue;
-                $hit[$id] ??= $s;
+                if (!$off($s)) { $hit[$id] ??= $s; continue; }
+                // started while sleep was excluded: does it still run (15 minutes or more) into an hour when sleep is allowed?
+                for ($t = strtotime(date('Y-m-d H:00:00', $s)) + 3600; $t < $e - 900; $t += 3600) {
+                    if (!$off($t)) { $during[$id] ??= [$t, $e]; break; }
+                }
             }
             if ($hit) $out[] = ['rule' => 's3-sleep', 'jobs' => array_merge([$s3['id']], array_keys($hit)), 'window' => null, 'count' => count($hit)];
+            if ($during) {
+                uasort($during, fn($x, $y) => $x[0] <=> $y[0]);
+                $heavy = (bool)array_filter(array_keys($during), fn($id) => in_array($byId[$id]['category'], ['parity', 'backup'], true));
+                $first = reset($during);
+                $out[] = ['rule' => 's3-sleep-during-run', 'jobs' => array_merge([$s3['id']], array_keys($during)), 'window' => null, 'count' => count($during),
+                    'sev' => $heavy ? 'warning' : 'info', 'vars' => ['{first}' => $byId[array_key_first($during)]['title'], '{at}' => date('H:i', $first[0]),
+                        '{jobs}' => count($during) === 1 ? 'A job is' : count($during) . ' jobs are', '{they}' => count($during) === 1 ? 'It starts' : 'They start']];
+            }
         }
         foreach ($out as &$w) {
             self::explain($w, $byId);
@@ -187,7 +234,7 @@ final class TtAnalyse
      *  is unfinished) lower a warning to info. */
     public static function severity(string $rule, array $a, array $b): string
     {
-        $info = ['trim-parity', 'mover-mover', 'overlap-any', 'same-start', 'cluster', 'spinup', 's3-sleep', 'pool-mover', 'pool-backup'];
+        $info = ['trim-parity', 'mover-mover', 'overlap-any', 'same-start', 'cluster', 'spinup', 's3-sleep', 'pool-mover', 'pool-backup', 'scrub-balance'];
         if (in_array($rule, $info, true) || !empty($a['conditional']) || !empty($b['conditional'])) return 'info';
         return 'warning';
     }
@@ -218,13 +265,82 @@ final class TtAnalyse
             'backup+update' => 'containers-twice', 'update+update' => 'containers-twice', 'backup+backup' => 'containers-twice'];
         // a parity check and its own pause/resume window are one check, not two
         if ($pair === 'parity+parity' && (!empty($a['conditional']) || !empty($b['conditional']))) return null;
-        if ($pair === 'pool+pool' && ($a['pool'] ?? 'a') === ($b['pool'] ?? 'b')) return 'pool-pool';
+        if ($pair === 'pool+pool' && ($a['pool'] ?? 'a') === ($b['pool'] ?? 'b')) return ($a['poolOp'] ?? '') !== ($b['poolOp'] ?? '') && isset($a['poolOp'], $b['poolOp']) ? 'scrub-balance' : 'pool-pool';
+        // a scrub or balance of a pool or of an array disk next to a parity check (a pause/resume window lowers it to info)
+        if ($pair === 'parity+pool') return 'scrub-parity';
         if ($pair === 'mover+pool') return 'pool-mover';
         if ($pair === 'backup+pool') return 'pool-backup';
         if (isset($map[$pair])) return $map[$pair];
         if (self::has($a, 'stops_containers') && self::has($b, 'stops_containers')) return 'containers-twice';
         if (self::has($a, 'array_io') && self::has($b, 'array_io')) return 'overlap-any';
         return null;
+    }
+
+    /** Parity checks whose next scheduled start comes less than 12 hours after the previous run ends (or before it
+     *  ends): several days ticked for a check that takes about a day. Increment windows are left out. id => first case. */
+    public static function parityRepeats(array $jobs, int $from, int $to): array
+    {
+        $out = [];
+        foreach ($jobs as $j) {
+            $s = $j['schedule'];
+            if ($j['category'] !== 'parity' || !empty($j['conditional']) || ($s['type'] ?? '') !== 'cron' || empty($s['parsed'])) continue;
+            $d = max(60, (int)($j['duration']['sec'] ?? 0));
+            $t = TtCron::expand($s['parsed'], $from - $d, $to, 2000, $s['guard'] ?? null, $s['every7Base'] ?? null);
+            for ($i = 0; $i + 1 < count($t); $i++) {
+                $gap = $t[$i + 1] - ($t[$i] + $d);
+                if ($gap >= 12 * 3600 || $t[$i + 1] < $from) continue;
+                $out[$j['id']] ??= ['window' => [$t[$i + 1], $t[$i + 1] + $d], 'count' => 0, 'starts' => [], 'gap' => max(0, $gap)];
+                $out[$j['id']]['count']++;
+                $out[$j['id']]['starts'][] = $t[$i + 1];
+            }
+        }
+        return $out;
+    }
+
+    /** Movers that Mover Tuning holds back while a check runs, where that means days without a move: a check that
+     *  takes over a day, or (Mover Tuning before 2026.11.05a) a check split into nightly parts, paused in between. */
+    public static function moverBlocked(array $jobs, array $win): array
+    {
+        $out = [];
+        foreach ($jobs as $m) {
+            if (empty($m['skipsDuringCheck'])) continue;
+            $mStarts = array_column(array_filter($win, fn($w) => $w[0] === $m['id']), 1);
+            foreach ($jobs as $p) {
+                if ($p['category'] !== 'parity' || ($p['schedule']['type'] ?? '') !== 'cron') continue;
+                $vars = ['{setting}' => $m['skipsDuringCheck']['setting']];
+                if (!empty($p['conditional'])) {
+                    if ($m['skipsDuringCheck']['pausedCounts'] !== true) continue;
+                    $out[] = ['rule' => 'mover-blocked-by-check', 'jobs' => [$m['id'], $p['id']], 'window' => null, 'count' => 1, 'variant' => 'paused', 'vars' => $vars];
+                    continue;
+                }
+                if ((int)($p['duration']['sec'] ?? 0) <= 86400) continue;
+                foreach ($win as [$id, $s, $e]) {
+                    if ($id !== $p['id']) continue;
+                    $skipped = count(array_filter($mStarts, fn($t) => $t >= $s && $t < $e));
+                    if (!$skipped) continue;
+                    $out[] = ['rule' => 'mover-blocked-by-check', 'jobs' => [$m['id'], $p['id']], 'window' => [$s, $e], 'count' => 1, 'variant' => 'long',
+                        'vars' => $vars + ['{dur}' => self::dur($e - $s), '{n}' => $skipped === 1 ? 'one run' : "$skipped runs in a row"]];
+                    break;
+                }
+            }
+        }
+        return $out;
+    }
+
+    /** "Stops 12 containers at 03:00: plex, sonarr, ... (+4 more)" */
+    public static function stopsText(array $names, ?string $at = null, int $show = 8): string
+    {
+        $n = count($names);
+        $list = implode(', ', array_slice($names, 0, $show)) . ($n > $show ? ' (+' . ($n - $show) . ' more)' : '');
+        return 'Stops ' . $n . ' container' . ($n === 1 ? '' : 's') . ($at !== null ? " at $at" : '') . ': ' . $list;
+    }
+
+    public static function dur(int $sec): string
+    {
+        $m = (int)round($sec / 60);
+        if ($m < 60) return max(1, $m) . ' min';
+        $h = intdiv($m, 60); $m %= 60;
+        return $h . ' h' . ($m ? " $m min" : '');
     }
 
     /** Which job is named first in a pair warning: the heavier, then the one with the lower id. */
@@ -242,8 +358,35 @@ final class TtAnalyse
         $t = fn($i) => isset($w['jobs'][$i]) ? ($byId[$w['jobs'][$i]]['title'] ?? $w['jobs'][$i]) : '';
         $texts = [
             'mover-parity' => ['warning', '%1$s and %2$s run at the same time',
-                'Both read and write the array disks, so each slows the other down; a check that normally takes a night can run into the day, and the mover may leave files on the cache until its next run.',
+                'A running check does not stop the scheduled mover: it is not blocked, only the Move button on the Main page is greyed out. Both read and write the array disks, so each slows the other down; a check that normally takes a night can run into the day.',
                 'Ex. move the mover to a time the check is done, or let it skip while a check runs (the Mover Tuning plugin has a setting for that).'],
+            'mover-parity:skipped' => ['info', '%2$s is skipped while %1$s runs',
+                'Mover Tuning is set not to start the scheduled mover during a check ("{setting}" is No), so this run is skipped instead of slowing the check; the files stay on the cache until the next run after the check.',
+                'Ex. nothing to change if the cache can hold the files of one more day; otherwise move the mover to a time the check is done.'],
+            'mover-blocked-by-check:long' => ['warning', '%1$s does not run while %2$s is unfinished',
+                'Mover Tuning skips the scheduled mover while a check runs ("{setting}" is No), and this check takes about {dur}, so the mover misses {n}; new files pile up on the cache until the check is done.',
+                'Ex. make sure the cache can hold a few days of new files, or set "{setting}" to Yes and let Parity Check Tuning pause the check while the mover runs.'],
+            'mover-blocked-by-check:paused' => ['warning', '%1$s does not run while %2$s is unfinished',
+                'Mover Tuning skips the scheduled mover while a check is in progress ("{setting}" is No), and this version also counts a paused check, so a check split into nightly parts can keep the mover off for days while the cache fills up.',
+                'Ex. update Mover Tuning (from 2026.11.05a it moves while the check is paused), or set "{setting}" to Yes.'],
+            'scrub-parity' => ['warning', '%2$s runs during %1$s',
+                'A scrub or balance reads (a balance also rewrites) every block of its disks while the check reads every array disk; together both slow down, and the advice on the Unraid forum is to keep scrubs away from parity checks.',
+                'Ex. run the scrub or balance a day before or after the check.'],
+            'scrub-balance' => ['info', '%1$s and %2$s run on the same pool at the same time',
+                'Both go through the whole pool and the balance also rewrites it, so each takes much longer than alone.',
+                'Ex. balance on the 1st of the month and scrub on the 15th.'],
+            'parity-repeat' => ['warning', '%1$s starts again soon after it finishes',
+                'It is set to start on days close together, and a check takes about {dur} here, so the next start comes {gap} after the previous run ends (or while it still runs); the scheduler starts a check on every ticked day and does not know the last one has just finished.',
+                'Ex. tick one day only, for example the first Sunday of the month, so the check runs once per period.'],
+            's3-sleep-during-run' => ['info', '{jobs} still running when S3 Sleep may put the server to sleep',
+                '{they} in hours you excluded from sleep but are still running later, ex. {first} at {at}; S3 Sleep decides by drive and network activity and has no check for a running job, and users report the server sleeping in the middle of a parity check.',
+                'Ex. exclude the hours until the job usually ends in the S3 Sleep settings, or start the job earlier.'],
+            'duplicate' => ['warning', '%1$s is in the crontab twice',
+                'The same command is in {a} and in {b}; crond starts each line on its own, so the job runs twice, and two runs of the same job at once can trip over each other (ex. two backups writing to the same folder).',
+                'Ex. keep the line the plugin writes and remove the copy added by hand.'],
+            'stale-live' => ['info', '{lines} in no schedule file on the flash drive',
+                '{list}. Unraid rebuilds this crontab from the .cron files on the flash drive (at boot, and when a plugin or settings page saves a schedule), so {them} until then and not after.',
+                'Ex. a line added by hand, or left by a plugin that removed its file without rebuilding the crontab; if it should keep running, set it up as a User Script.'],
             'backup-mover' => ['warning', '%1$s stops containers while %2$s runs',
                 'The backup stops containers and copies their appdata while the mover may be moving files of the same shares; both compete for the same disks and the backup takes longer, so the containers stay down longer.',
                 'Ex. start the backup an hour after the mover usually finishes.'],
@@ -296,7 +439,9 @@ final class TtAnalyse
                 'Disks spin down after %5$s idle, and a job that touches them that often keeps waking them; each spin-up costs time and wear.',
                 'Ex. run it less often, or set the job to run only when there is work.'],
         ];
-        [$sev, $title, $why, $ex] = $texts[$w['rule']];
+        $key = $w['rule'] . (!empty($w['skipped']) ? ':skipped' : '') . (isset($w['variant']) ? ':' . $w['variant'] : '');
+        [$sev, $title, $why, $ex] = $texts[$key];
+        if (isset($w['sev'])) $sev = $w['sev'];
         $spin = isset($w['spindown']) ? self::spinWords((int)$w['spindown']) : '';
         $span = $w['window'] ? (int)round(($w['window'][1] - $w['window'][0]) / 60) : 0;
         $w['severity'] = $sev;
@@ -304,8 +449,15 @@ final class TtAnalyse
         $loc = isset($w['file']) ? $w['file']['file'] . ':' . $w['file']['line'] : '';
         $w['why'] = sprintf($why, '', '', 0, 0, $spin, $loc, $w['file']['why'] ?? '');
         $w['example'] = $ex;
+        $vars = $w['vars'] ?? [];
+        $w['title'] = strtr($w['title'], $vars); $w['why'] = strtr($w['why'], $vars); $w['example'] = strtr($w['example'], $vars);
+        unset($w['vars'], $w['sev'], $w['variant'], $w['skipped']);
+        // a backup finding names the containers the backup stops, the link users miss between restarts and the backup
+        if (in_array($w['rule'], ['backup-mover', 'backup-parity', 'containers-twice', 'pool-backup', 'duplicate'], true)) {
+            foreach (array_unique($w['jobs']) as $id) if (!empty($byId[$id]['stops'])) { $w['why'] .= ' ' . $byId[$id]['title'] . ': ' . self::stopsText($byId[$id]['stops']) . '.'; break; }
+        }
         foreach ($w['jobs'] as $id) {
-            if (!empty($byId[$id]['conditional']) && $w['rule'] !== 'array-manual') {
+            if (!empty($byId[$id]['conditional']) && !in_array($w['rule'], ['array-manual', 'mover-blocked-by-check'], true)) {
                 if ($w['severity'] === 'warning') $w['severity'] = 'info';
                 $w['why'] .= ' ' . $byId[$id]['title'] . ': ' . strtolower($byId[$id]['conditional'][0]) . substr($byId[$id]['conditional'], 1);
             }

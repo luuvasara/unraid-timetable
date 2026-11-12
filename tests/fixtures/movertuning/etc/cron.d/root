@@ -1,0 +1,6 @@
+# Generated parity check schedule:
+0 22 * * 0,1 /usr/local/sbin/mdcmd check NOCORRECT &> /dev/null || :
+# Generated schedule for Mover Tuning move:
+0 3 * * * /usr/local/emhttp/plugins/ca.mover.tuning/mover start |& logger -t move
+# Appdata.Backup cron settings
+0 5 * * 2 php /usr/local/emhttp/plugins/appdata.backup/scripts/backup.php > /dev/null 2>&1

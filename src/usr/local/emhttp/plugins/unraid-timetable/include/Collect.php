@@ -18,6 +18,7 @@
  * Third-party plugins (their own repositories): see the per-plugin functions below. */
 
 require_once __DIR__ . '/Cron.php';
+require_once __DIR__ . '/Analyse.php';   // TtAnalyse::stopsText, the same words in the list and the findings
 
 final class TtCollect
 {
@@ -30,6 +31,8 @@ final class TtCollect
     private ?array $syslog = null;
     private array $live = [];
     private string $curFile = 'crontab';         // normalised lines of the live crontabs
+    private string $curExpr = '';
+    private array $staleLive = [];               // lines of /etc/cron.d/root that no .cron file on the flash drive has
 
     public function __construct(string $root = '', ?int $now = null)
     {
@@ -42,10 +45,39 @@ final class TtCollect
         return $this->root . $path;
     }
 
-    private function read(string $path): ?string
+    /** Largest settings or crontab file read whole; a bigger one is skipped with a note. Logs are read from their end. */
+    public const MAX_FILE = 1 << 20;
+    public const MAX_LOG = 2 << 20;
+
+    private function read(string $path, bool $log = false): ?string
     {
-        $f = $this->p($path);
-        return is_file($f) && is_readable($f) ? (string)file_get_contents($f) : null;
+        return $this->readFile($this->p($path), $path, $log);
+    }
+
+    /** A file's text, bounded: a log gives its last MAX_LOG bytes, any other file over MAX_FILE gives null and a note,
+     *  so a huge or runaway file written by another plugin cannot use up the page's memory. */
+    private function readFile(string $f, string $shown, bool $log = false): ?string
+    {
+        if (!is_file($f) || !is_readable($f)) return null;
+        $size = (int)@filesize($f);
+        $max = $log ? self::MAX_LOG : self::MAX_FILE;
+        if ($size <= $max) { $t = @file_get_contents($f); return $t === false ? null : $t; }
+        if (!$log) { $this->notes[] = "Skipped $shown: " . round($size / 1048576, 1) . ' MB is more than a schedule or settings file should be.'; return null; }
+        $t = @file_get_contents($f, false, null, $size - $max, $max);
+        if ($t === false) return null;
+        $nl = strpos($t, "\n");   // drop the cut first line
+        return $nl === false ? '' : substr($t, $nl + 1);
+    }
+
+    /** Text from another plugin's or a user's file, made safe to keep: control characters out, one line, capped.
+     *  Escaping for HTML is done where it is printed (Render.php h()). */
+    public static function clean($v, int $max = 300): string
+    {
+        if (!is_string($v) && !is_int($v) && !is_float($v)) return '';
+        $v = preg_replace('/[\x00-\x1F\x7F]+/u', ' ', (string)$v) ?? preg_replace('/[\x00-\x1F\x7F]+/', ' ', (string)$v);
+        if (!mb_check_encoding($v, 'UTF-8')) $v = mb_convert_encoding($v, 'UTF-8', 'UTF-8');
+        $v = trim(preg_replace('/ {2,}/', ' ', $v));
+        return mb_strlen($v) > $max ? mb_substr($v, 0, $max - 3) . '...' : $v;
     }
 
     /** INI as Unraid writes it (key="value", optional [sections]); null when missing. */
@@ -82,6 +114,9 @@ final class TtCollect
         $ctx = $this->context();
         $this->durations($ctx);
         $ctx['unloaded'] = $this->unloaded($this->live);
+        $ctx['staleLive'] = $this->staleLive;
+        $ctx['duplicates'] = $this->duplicates();
+        $ctx['moverTuning'] = $this->moverTuning();
         return ['jobs' => array_values($this->jobs), 'context' => $ctx, 'notes' => $this->notes];
     }
 
@@ -103,7 +138,7 @@ final class TtCollect
         foreach ($files as $f) {
             $rel = substr($f, strlen($this->root));
             $plugin = basename(dirname($f));
-            foreach (preg_split('/\R/', (string)file_get_contents($f)) as $i => $line) {
+            foreach (preg_split('/\R/', (string)$this->readFile($f, substr($f, strlen($this->root)))) as $i => $line) {
                 if (TtCron::splitLine($line) === null) continue;
                 $this->flashLines[self::norm($line)] ??= ['file' => $rel, 'line' => $i + 1, 'plugin' => $plugin];
             }
@@ -119,9 +154,9 @@ final class TtCollect
             $dir = basename(dirname($f));
             $rel = substr($f, strlen($this->root));
             $installed = $dir === 'dynamix' || $this->installed($dir);
-            foreach (preg_split('/\R/', (string)file_get_contents($f)) as $i => $line) {
+            foreach (preg_split('/\R/', (string)$this->readFile($f, $rel)) as $i => $line) {
                 if (TtCron::splitLine($line) === null || isset($live[self::norm($line)])) continue;
-                $out[] = ['file' => $rel, 'line' => $i + 1, 'text' => trim($line),
+                $out[] = ['file' => $rel, 'line' => $i + 1, 'text' => self::clean($line, 300),
                     'why' => $installed ? 'the plugin is installed, but the crontab has not been rebuilt since this line was written' : "no installed plugin is called \"$dir\", so update_cron skips this folder"];
             }
         }
@@ -141,12 +176,15 @@ final class TtCollect
         if (!$tables) $this->notes[] = 'No crontab was found to read (/etc/cron.d, /var/spool/cron/crontabs).';
         foreach ($tables as $f) {
             $rel = substr($f, strlen($this->root));
-            $text = @file_get_contents($f);
-            if ($text === false) { $this->notes[] = "Could not read $rel."; continue; }
+            $text = $this->readFile($f, $rel);
+            if ($text === null) { $this->notes[] = "Could not read $rel."; continue; }
             foreach (preg_split('/\R/', $text) as $i => $line) {
                 $l = TtCron::splitLine($line);
                 if ($l === null) continue;
                 $this->live[self::norm($line)] = true;
+                // /etc/cron.d/root is rebuilt from the .cron files alone (sbin/update_cron:6-16, "crontab -c /etc/cron.d -"),
+                // so a line there that no such file has goes away at the next rebuild
+                if ($rel === '/etc/cron.d/root' && !isset($this->flashLines[self::norm($line)])) $this->staleLive[] = ['file' => $rel, 'line' => $i + 1, 'text' => self::clean($line, 300)];
                 $this->cronLine($l, $line, $rel, $i + 1);
             }
         }
@@ -154,7 +192,8 @@ final class TtCollect
 
     private function cronLine(array $l, string $raw, string $file, int $lineNo): void
     {
-        $src = $this->flashLines[self::norm($raw)] ?? null;
+        // only Unraid's own crontab is built from the .cron files; the same text in another crontab is a copy, not that file
+        $src = $file === '/etc/cron.d/root' ? ($this->flashLines[self::norm($raw)] ?? null) : null;
         $source = ['file' => $src['file'] ?? $file, 'line' => $src['line'] ?? $lineNo, 'live' => "$file:$lineNo"];
         $cmd = $l['command'];
         if ($l['expr'] === '@reboot') {
@@ -170,6 +209,7 @@ final class TtCollect
             return;
         }
         $this->curFile = $file;
+        $this->curExpr = $l['expr'];
         $job = $this->classify($cmd, $src['plugin'] ?? null);
         $job += ['command' => $cmd, 'source' => $source, 'schedule' => $sched];
         if (!empty($job['fold'])) return;   // a pause line: the end of the window its resume line draws
@@ -224,6 +264,17 @@ final class TtCollect
             ['#ca\.update\.applications/scripts/updateApplications\.php#', ['title' => 'Plugin auto update', 'owner' => 'Auto Update Applications', 'category' => 'update', 'impact' => [], 'link' => '/Settings/AutoUpdateApps']],
             // Dynamix SSD Trim (unraid/dynamix ssd-trim, update.trim.php:21-25)
             ['#^/sbin/fstrim -a#', ['title' => 'TRIM (Dynamix SSD Trim)', 'owner' => 'Dynamix SSD Trim', 'category' => 'trim', 'impact' => ['pool_io'], 'link' => $sch]],
+            // QNAP Hardware (luuvasara/unraid-qnap-hardware, scripts/qnaphw-apply writes the line while HISTORY=yes)
+            ['#qnap-hardware/scripts/qnaphw-sample#', ['title' => 'QNAP Hardware: temperature history sample', 'owner' => 'QNAP Hardware', 'category' => 'checks', 'impact' => [], 'light' => true, 'link' => '/Settings/QnapHW',
+                'description' => 'Records the temperature of each drive in the enclosure bays, as Unraid last read it (no drive is woken), and keeps the last 24 hours in RAM.']],
+            // FolderView Plus (alexphillips-dev/FolderView-Plus, scripts/scheduled_backup.php -> runScheduledBackups())
+            ['#folderview\.plus/scripts/scheduled_backup\.php#', ['title' => 'FolderView Plus: scheduled folder backup', 'owner' => 'FolderView Plus', 'category' => 'checks', 'impact' => [], 'light' => true, 'link' => null,
+                'description' => 'Checks whether a scheduled backup of the Docker and VM folder layout is due; when it is and the folders or preferences changed, saves a backup file on the flash drive.']],
+            // sysstat: sa1 collects system activity data for sar, sa2 writes the daily report
+            ['#(^|/)sa1(\s|$)#', ['title' => 'System activity data (sysstat)', 'owner' => 'sysstat', 'category' => 'checks', 'impact' => [], 'light' => true, 'link' => null,
+                'description' => 'Records CPU, memory, disk and network counters for the sar command; a short run that only reads counters.']],
+            ['#(^|/)sa2(\s|$)#', ['title' => 'System activity daily report (sysstat)', 'owner' => 'sysstat', 'category' => 'checks', 'impact' => [], 'light' => true, 'link' => null,
+                'description' => 'Writes the daily sar summary from the data sa1 recorded.']],
             // Multiple arrays plugin
             ['#multiarray/scripts/multiarray mover (\d+)#', ['title' => 'Mover, array %1$s', 'owner' => 'Multiple arrays', 'category' => 'mover', 'impact' => ['array_io', 'pool_io', 'wakes_disks', 'needs_array'], 'link' => '/Main']],
             ['#multiarray/scripts/multiarray monitor#', ['title' => 'Monitor, extra arrays', 'owner' => 'Multiple arrays', 'category' => 'checks', 'impact' => [], 'link' => '/Main', 'light' => true]],
@@ -276,7 +327,7 @@ final class TtCollect
             if (preg_match('/^user\.script\.start\.(hourly|daily|weekly|monthly)\.sh$/', $b, $m)) {
                 // User Scripts: startSchedule.php runs every script whose frequency matches (startSchedule.php:19-20)
                 foreach ($us as $path => $e) {
-                    if (($e['frequency'] ?? '') !== $m[1]) continue;
+                    if (!is_array($e) || ($e['frequency'] ?? '') !== $m[1]) continue;
                     $this->add($this->userScriptJob(['title' => 'User script', 'owner' => 'User Scripts', 'category' => 'scripts', 'impact' => ['unknown'], 'link' => '/Settings/Userscripts'], (string)$path) + $base);
                 }
                 continue;
@@ -303,6 +354,7 @@ final class TtCollect
         $what = $script === 'btrfs_balance' ? 'Balance' : 'Scrub';
         $job['title'] = $what . ', ' . ($disk ? "array disk $name" : "pool $name") . ' (' . ($zfs ? 'zfs' : 'btrfs') . ')';
         $job['pool'] = $name;
+        $job['poolOp'] = $script === 'btrfs_balance' ? 'balance' : 'scrub';
         $job['link'] = '/Main/Device?name=' . rawurlencode($name);
         if ($disk) $job['impact'] = ['array_io', 'wakes_disks', 'needs_array'];
         $words = [];
@@ -340,7 +392,7 @@ final class TtCollect
             $members = @scandir($this->p("/sys/fs/btrfs/$uuid/devices")) ?: [];
             if (!array_intersect($names, $members)) continue;
             $sec = 0; $ok = false;
-            foreach (preg_split('/\R/', (string)file_get_contents($f)) as $l) {
+            foreach (preg_split('/\R/', (string)$this->readFile($f, basename($f))) as $l) {
                 if (!str_contains($l, '|duration:')) continue;
                 $kv = [];
                 foreach (explode('|', $l) as $part) if (str_contains($part, ':') && !str_contains(explode(':', $part)[0], '-')) { [$k, $v] = explode(':', $part, 2); $kv[$k] = $v; }
@@ -355,10 +407,10 @@ final class TtCollect
     private function userScriptJob(array $job, string $path): array
     {
         $dir = dirname($path);
-        $name = trim((string)$this->read("$dir/name")) ?: basename($dir);
+        $name = self::clean($this->read("$dir/name"), 120) ?: self::clean(basename($dir), 120);
         $job['title'] = "User script: $name";
-        $desc = trim((string)$this->read("$dir/description"));
-        if ($desc !== '') $job['description'] = mb_strimwidth(preg_replace('/\s+/', ' ', $desc), 0, 300, '...');
+        $desc = self::clean($this->read("$dir/description"), 300);
+        if ($desc !== '') $job['description'] = $desc;
         $job['script'] = $path;
         $job['logFolder'] = basename($dir);
         return $job;
@@ -373,18 +425,40 @@ final class TtCollect
         if ($beta) { $job['link'] = '/Settings/AB.Beta.Main'; $job['owner'] = 'Appdata Backup (beta)'; }
         if (str_contains($cmd, ' extra')) $job['title'] = 'Appdata backup, extra schedule';
         if ($cfg === null) return $job;
-        $stop = 0; $all = 0;
-        foreach (($cfg['containerSettings'] ?? []) as $c) {
-            if (!is_array($c)) continue;
-            $all++;
-            if (($c['skip'] ?? 'no') === 'yes') continue;
-            if (($c['dontStop'] ?? 'no') !== 'yes') $stop++;
+        // a container's own setting, or when it is empty the "defaults" block (ABSettings.php getContainerSpecificSettings);
+        // a value of the wrong type counts as not set
+        $def = is_array($cfg['defaults'] ?? null) ? $cfg['defaults'] : [];
+        $str = fn($x) => is_string($x) ? $x : '';
+        $val = fn(array $c, string $k) => $str($c[$k] ?? '') !== '' ? $str($c[$k]) : ($str($def[$k] ?? '') ?: 'no');
+        $settings = array_filter(is_array($cfg['containerSettings'] ?? null) ? $cfg['containerSettings'] : [], 'is_array');
+        // in the backup's own order (containerOrder), then the rest
+        $order = array_values(array_filter(is_array($cfg['containerOrder'] ?? null) ? $cfg['containerOrder'] : [], fn($n) => is_string($n) && isset($settings[$n])));
+        foreach (array_keys($settings) as $n) if (!in_array((string)$n, $order, true)) $order[] = (string)$n;
+        $all = count($settings); $stops = [];
+        foreach ($order as $n) {
+            if ($val($settings[$n], 'skip') === 'yes' || $val($settings[$n], 'dontStop') === 'yes') continue;
+            $name = self::clean($n, 64);
+            if ($name !== '' && count($stops) < 500) $stops[] = $name;
         }
-        $dest = (string)($cfg['destination'] ?? '');
+        $job['stopsAt'] = self::startTime($this->curExpr);
+        $job['stops'] = $stops;
+        $dest = self::clean($cfg['destination'] ?? '', 200);
         if (preg_match('#^/mnt/(user|disk\d+|user0)(/|$)#', $dest)) { $job['impact'][] = 'array_io'; $job['impact'][] = 'wakes_disks'; }
-        $method = ($cfg['backupMethod'] ?? '') === 'stopAll' ? 'all at once' : 'one after the other';
-        $job['note'] = ($all ? "Stops $stop of the $all containers it lists, $method" : 'Stops the containers it backs up') . ($dest !== '' ? "; writes to $dest." : '.');
+        $method = ($cfg['backupMethod'] ?? null) === 'stopAll' ? 'all at once' : 'one after the other';
+        $down = $method === 'all at once' ? 'they stay down until all of them are backed up' : 'each is down while it is backed up';
+        $job['note'] = $stops
+            ? TtAnalyse::stopsText($stops, $job['stopsAt']) . " (of the $all it lists), $method; $down, so a container that restarts at this time is usually this job."
+            : ($all ? "Stops none of the $all containers it lists." : 'Stops the containers it backs up, one after the other or all at once.');
+        if ($dest !== '') $job['note'] .= " Writes to $dest.";
         return $job;
+    }
+
+    /** HH:MM when a cron schedule starts at one time of day, else null. */
+    private static function startTime(string $expr): ?string
+    {
+        try { $p = TtCron::parse($expr); } catch (InvalidArgumentException $e) { return null; }
+        if (count($p['hour']) !== 1 || count($p['min']) !== 1) return null;
+        return sprintf('%02d:%02d', array_key_first($p['hour']), array_key_first($p['min']));
     }
 
     /** User Scripts at array start, array stop and first array start (event/disks_mounted, event/stopping_svcs). */
@@ -395,8 +469,8 @@ final class TtCollect
         if ($us === null) return;
         $words = ['start' => 'when the array starts', 'stop' => 'when the array stops', 'boot' => 'at the first array start after boot'];
         foreach ($us as $path => $e) {
-            $f = $e['frequency'] ?? '';
-            if (!isset($words[$f])) continue;
+            $f = is_array($e) ? ($e['frequency'] ?? '') : '';
+            if (!is_string($f) || !isset($words[$f])) continue;
             $job = $this->userScriptJob(['title' => 'User script', 'owner' => 'User Scripts', 'category' => 'scripts', 'impact' => ['unknown'], 'link' => '/Settings/Userscripts'], (string)$path);
             $job['schedule'] = ['type' => 'event', 'event' => $f, 'text' => $words[$f]];
             $job['source'] = ['file' => '/boot/config/plugins/user.scripts/schedule.json', 'line' => null];
@@ -429,6 +503,50 @@ final class TtCollect
                 'link' => '/Settings/FanSettings', 'schedule' => ['type' => 'daemon', 'text' => "checks the disk temperatures every $iv minutes"],
                 'source' => ['file' => substr($f, strlen($this->root)), 'line' => null], 'command' => 'autofan']);
         }
+    }
+
+    /** Pairs of jobs that run the same command from two different crontab files or .cron files (ex. a plugin's own
+     *  line and a copy in the user crontab): crond starts each line on its own, so the job runs twice. */
+    private function duplicates(): array
+    {
+        $seen = []; $out = [];
+        foreach ($this->jobs as $id => $j) {
+            if (($j['schedule']['type'] ?? '') !== 'cron' || isset($j['source']['via']) || !isset($j['source']['live'])) continue;
+            $k = self::norm(preg_replace('/^(root|nobody)\s+/', '', (string)$j['command']));
+            $where = preg_replace('/:\d+$/', '', (string)$j['source']['live']);   // the crontab it is in, not the .cron file it matches
+            foreach ($seen[$k] ?? [] as [$id2, $where2]) if ($where2 !== $where) { $out[] = [$id2, $id]; continue 2; }
+            $seen[$k][] = [$id, $where];
+        }
+        return $out;
+    }
+
+    /** Mover Tuning's "Let scheduled mover run during a parity check / rebuild" (key parity) and the forced move's
+     *  forceParity, read as its parse_plugin_cfg() does: the saved cfg over the plugin's default.cfg (default "no").
+     *  ca.mover.tuning mover.php:344 skips a scheduled run while var.ini mdResync > 0 (:110-115); before 2026.11.05a it
+     *  tested mdResyncPos, which stays set while a check is paused (commit e4f9034). Below Unraid 7.2.1 the plugin puts its
+     *  own script in place of /usr/local/sbin/mover (keeping mover.old, ca.mover.tuning.plg:782-799), so Unraid's mover
+     *  line obeys the same setting. Nothing is run. */
+    private function moverTuning(): ?array
+    {
+        if (!$this->installed('ca.mover.tuning')) return null;
+        $def = $this->ini('/usr/local/emhttp/plugins/ca.mover.tuning/default.cfg') ?? [];
+        $cfg = ($this->ini('/boot/config/plugins/ca.mover.tuning/ca.mover.tuning.cfg') ?? []) + $def;
+        $plg = $this->read('/var/log/plugins/ca.mover.tuning.plg') ?: $this->read('/boot/config/plugins/ca.mover.tuning.plg');
+        $ver = $plg !== null && preg_match('/<!ENTITY\s+version\s+"([^"]+)"/', $plg, $m) ? $m[1] : null;
+        $mt = ['parity' => isset($cfg['parity']) ? (string)$cfg['parity'] : null, 'forceParity' => isset($cfg['forceParity']) ? (string)$cfg['forceParity'] : null,
+            'version' => $ver, 'pausedCounts' => $ver !== null ? strcmp($ver, '2026.11.05a') < 0 : null,
+            'replacesMover' => is_file($this->p('/usr/local/sbin/mover.old'))];
+        foreach ($this->jobs as &$j) {
+            if ($j['category'] !== 'mover') continue;
+            $key = null;
+            if ($j['owner'] === 'Mover Tuning') $key = str_contains($j['title'], 'forced') ? 'forceParity' : 'parity';
+            elseif ($j['owner'] === 'Unraid' && $mt['replacesMover']) $key = 'parity';
+            if ($key === null || $mt[$key] !== 'no') continue;
+            $j['skipsDuringCheck'] = ['setting' => $key === 'parity' ? 'Let scheduled mover run during a parity check / rebuild' : 'Allow force mover schedule to run during a parity check/rebuild',
+                'pausedCounts' => $mt['pausedCounts']];
+        }
+        unset($j);
+        return $mt;
     }
 
     /* ---------- context ---------- */
@@ -523,7 +641,7 @@ final class TtCollect
     /** Median of the last 5 finished parity checks in /boot/config/parity-checks.log (status 0, action "check"). */
     private function parityHistory(): ?array
     {
-        $t = $this->read('/boot/config/parity-checks.log');
+        $t = $this->read('/boot/config/parity-checks.log', true);
         if ($t === null) return null;
         $d = [];
         foreach (preg_split('/\R/', trim($t)) as $row) {
@@ -583,7 +701,7 @@ final class TtCollect
             $h = fopen($p, 'r');
             if ($h === false) continue;
             if ($size > 8 << 20) fseek($h, $size - (8 << 20));   // the last 8 MB is plenty for run times
-            while (($l = fgets($h)) !== false) {
+            while (($l = fgets($h, 8192)) !== false) {   // a line longer than this is not a mover or update line
                 if (str_contains($l, 'move: mover: ') || str_contains($l, 'Docker Auto')) $this->syslog[] = rtrim($l);
             }
             fclose($h);
@@ -604,7 +722,7 @@ final class TtCollect
     /** Appdata Backup's log of its last run: "[d.m.Y H:i:s]" lines from "WELCOME" to "DONE!" (backup.php:36, :371). */
     private function appdataDuration(): ?array
     {
-        $t = $this->read('/tmp/appdata.backup/ab.log');
+        $t = $this->read('/tmp/appdata.backup/ab.log', true);
         if ($t === null) return null;
         $s = $e = null;
         foreach (preg_split('/\R/', $t) as $l) {
@@ -621,7 +739,7 @@ final class TtCollect
     private function userScriptDuration(array $j): ?array
     {
         if (empty($j['logFolder'])) return null;
-        $t = $this->read('/tmp/user.scripts/tmpScripts/' . $j['logFolder'] . '/log.txt');
+        $t = $this->read('/tmp/user.scripts/tmpScripts/' . $j['logFolder'] . '/log.txt', true);
         if ($t === null) return null;
         $d = []; $s = null;
         foreach (preg_split('/\R/', $t) as $l) {
@@ -676,6 +794,11 @@ final class TtCollect
     private function add(array $job): void
     {
         $job['impact'] = array_values(array_unique($job['impact'] ?? []));
+        // every text that can come from a file: no control characters, bounded length
+        foreach (['title' => 160, 'owner' => 160, 'description' => 300, 'note' => 1200, 'command' => 500, 'pool' => 64, 'mount' => 200, 'script' => 300] as $k => $max) {
+            if (isset($job[$k])) $job[$k] = self::clean($job[$k], $max);
+        }
+        foreach (['file', 'via', 'live'] as $k) if (isset($job['source'][$k])) $job['source'][$k] = self::clean($job['source'][$k], 300);
         $base = preg_replace('/[^a-z0-9]+/', '-', strtolower($job['title']));
         $id = trim($base, '-');
         for ($i = 2; isset($this->jobs[$id]); $i++) $id = trim($base, '-') . "-$i";

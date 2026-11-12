@@ -1,0 +1,6 @@
+0 1 * * * /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/evil/script > /dev/null 2>&1
+0 2 * * * /usr/local/emhttp/plugins/user.scripts/startCustom.php /boot/config/plugins/user.scripts/scripts/long/script > /dev/null 2>&1
+0 3 * * * php /usr/local/emhttp/plugins/appdata.backup/scripts/backup.php > /dev/null 2>&1
+0 4 * * * /usr/local/emhttp/plugins/dynamix/scripts/btrfs_scrub start /mnt/../"><svg/onload=alert(5)>'x &> /dev/null
+0 5 * * * /usr/local/emhttp/plugins/dynamix/scripts/zfs_scrub start ../../etc/passwd" &> /dev/null
+0 6 * * * /opt/bell-and-escape[2J.sh

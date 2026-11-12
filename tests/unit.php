@@ -153,5 +153,63 @@ $bad = [job('x', 'other', '61 * * * *', 60, [])];
 TtAnalyse::prepare($bad);
 ok(isset($bad[0]['schedule']['error']) && TtAnalyse::windows($bad, $now, $now + 86400) === [], 'bad expression flagged and skipped');
 
+// --- 2026.11.12h rules ---
+$rules = fn(array $ws) => array_map(fn($x) => $x['rule'] . ':' . implode(',', $x['jobs']), $ws);
+$byRule = function (array $ws, string $r) { return array_values(array_filter($ws, fn($x) => $x['rule'] === $r)); };
+// parity-repeat: Sunday and Monday ticked, a 23 h check: the Monday start comes 1 h after the end
+$pr = [job('pc', 'parity', '0 23 * * 0,1', 23 * 3600, ['array_io'], 'Parity check')];
+TtAnalyse::prepare($pr);
+$pw = TtAnalyse::warnings($pr, $now, 14);
+$x = $byRule($pw, 'parity-repeat');
+ok(count($x) === 1 && $x[0]['severity'] === 'warning' && str_contains($x[0]['why'], '23 h') && str_starts_with($x[0]['example'], 'Ex.'), 'parity-repeat when the next start comes soon after the end', $rules($pw));
+// a monthly check is not a repeat; a 26 h check on two days is a repeat and not "self"
+$pr2 = [job('pc', 'parity', '0 23 * * 0,1', 26 * 3600, ['array_io'], 'Parity check')];
+TtAnalyse::prepare($pr2);
+$pw2 = TtAnalyse::warnings($pr2, $now, 14);
+ok($byRule($pw2, 'parity-repeat') && !$byRule($pw2, 'self'), 'a check longer than the gap is parity-repeat, not self', $rules($pw2));
+$pr3 = [job('pc', 'parity', '0 1 1 * *', 20 * 3600, ['array_io'], 'Parity check')];
+TtAnalyse::prepare($pr3);
+ok(!$byRule(TtAnalyse::warnings($pr3, $now, 70), 'parity-repeat'), 'a monthly check does not repeat');
+// scrub-parity, scrub-balance
+$sc = [job('pc', 'parity', '0 1 * * 0', 8 * 3600, ['array_io'], 'Parity check'),
+    job('scr', 'pool', '0 2 * * 0', 7200, ['pool_io'], 'Scrub, pool fast (btrfs)') + ['pool' => 'fast', 'poolOp' => 'scrub'],
+    job('bal', 'pool', '0 3 * * 0', 7200, ['pool_io'], 'Balance, pool fast (btrfs)') + ['pool' => 'fast', 'poolOp' => 'balance']];
+TtAnalyse::prepare($sc);
+$sw = TtAnalyse::warnings($sc, $now, 7);
+$x = $byRule($sw, 'scrub-parity');
+ok(count($x) === 2 && $x[0]['severity'] === 'warning' && str_contains($x[0]['title'], 'Parity check'), 'pool scrub and balance during a parity check are warnings', $rules($sw));
+$x = $byRule($sw, 'scrub-balance');
+ok(count($x) === 1 && $x[0]['severity'] === 'info' && !$byRule($sw, 'pool-pool'), 'scrub and balance of one pool are info, not pool-pool', $rules($sw));
+// s3-sleep-during-run: starts at 02:00 (sleep excluded 01-03), still running at 04:00
+$sl = [job('long', 'backup', '0 2 * * *', 4 * 3600, ['stops_containers'], 'Long backup'), job('short', 'other', '0 2 * * *', 1800, ['array_io'], 'short job'),
+    ['id' => 's3', 'title' => 'S3 Sleep', 'owner' => 't', 'category' => 'sleep', 'impact' => [], 'schedule' => ['type' => 'daemon'], 'sleep' => ['service' => '1', 'stopHour' => [1, 2, 3], 'stopDay' => []]]];
+TtAnalyse::prepare($sl);
+$slw = TtAnalyse::warnings($sl, $now, 3);
+$x = $byRule($slw, 's3-sleep-during-run');
+ok(count($x) === 1 && in_array('long', $x[0]['jobs'], true) && !in_array('short', $x[0]['jobs'], true) && $x[0]['severity'] === 'warning', 's3-sleep-during-run names the job that runs into a sleep hour, warning for a backup', $rules($slw));
+ok(!$byRule($slw, 's3-sleep'), 'jobs that start in excluded hours are not s3-sleep');
+// Mover Tuning skips the scheduled mover during a check: mover-parity is info; a paused increment that still counts blocks the mover
+$mt = [job('pc', 'parity', '0 1 * * 0', 8 * 3600, ['array_io'], 'Parity check'),
+    job('mv', 'mover', '0 3 * * *', 1800, ['array_io'], 'Mover (Mover Tuning)') + ['skipsDuringCheck' => ['setting' => 'parity', 'pausedCounts' => false]]];
+TtAnalyse::prepare($mt);
+$mw = TtAnalyse::warnings($mt, $now, 14);
+$x = $byRule($mw, 'mover-parity');
+ok($x && $x[0]['severity'] === 'info' && str_contains($x[0]['why'], 'skipped'), 'mover-parity is info when the run is skipped during the check', $x[0] ?? $rules($mw));
+ok(!$byRule($mw, 'mover-blocked-by-check'), 'an 8 h check does not block the mover for days');
+$mt2 = $mt;
+$mt2[] = job('inc', 'parity', '0 0 * * *', 6 * 3600, ['array_io'], 'Parity check, cumulative part') + ['conditional' => 'Runs only while a parity check is unfinished.'];
+$mt2[1]['skipsDuringCheck']['pausedCounts'] = true;
+TtAnalyse::prepare($mt2);
+$x = $byRule(TtAnalyse::warnings($mt2, $now, 14), 'mover-blocked-by-check');
+ok(count($x) === 1 && $x[0]['severity'] === 'warning' && str_contains($x[0]['why'], 'paused'), 'an older Mover Tuning counts a paused increment check as running', $x);
+$mt2[1]['skipsDuringCheck']['pausedCounts'] = false;
+ok(!$byRule(TtAnalyse::warnings($mt2, $now, 14), 'mover-blocked-by-check'), 'a current Mover Tuning runs the mover while the check is paused');
+// duplicate lines: same command from two files
+$du = [job('a', 'backup', '0 3 * * 0', 3600, ['stops_containers'], 'Appdata backup') + ['command' => 'php /x/backup.php', 'source' => ['file' => '/a.cron', 'line' => 2, 'live' => '/etc/cron.d/root:5']],
+    job('a2', 'backup', '0 3 * * 0', 3600, ['stops_containers'], 'Appdata backup') + ['command' => 'php /x/backup.php', 'source' => ['file' => '/var/spool/cron/crontabs/root', 'line' => 9, 'live' => '/var/spool/cron/crontabs/root:9']]];
+TtAnalyse::prepare($du);
+$dw = TtAnalyse::warnings($du, $now, 7, ['duplicates' => [['a', 'a2']]]);
+ok(count($byRule($dw, 'duplicate')) === 1 && $byRule($dw, 'duplicate')[0]['severity'] === 'warning' && !$byRule($dw, 'containers-twice'), 'duplicate line warns once and hides the pair finding with itself', $rules($dw));
+
 echo ($fail ? "FAIL $fail of $n" : "ok   unit: $n checks") . "\n";
 exit($fail ? 1 : 0);

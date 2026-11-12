@@ -30,10 +30,12 @@
 # Generated zfs scrub tank schedule:
 30 1 1 * * /usr/local/emhttp/plugins/dynamix/scripts/zfs_scrub start tank &> /dev/null
 # Generated btrfs scrub disk3 schedule:
-20 5 * * 6 /usr/local/emhttp/plugins/dynamix/scripts/btrfs_scrub start /mnt/disk3 &> /dev/null
+20 5 * * 0 /usr/local/emhttp/plugins/dynamix/scripts/btrfs_scrub start /mnt/disk3 &> /dev/null
 # NUT UPS statistics
 */5 * * * * /usr/local/emhttp/plugins/nut-dw/scripts/nutstats.sh &> /dev/null
 # Appdata Cleanup Plus purge timer
 17 * * * * php /usr/local/emhttp/plugins/appdata.cleanup.plus/scripts/scheduled-purge.php 2>&1 >/dev/null | /usr/bin/logger -t appdata-cleanup-plus
 # a script with an argument
 5 6 * * * /usr/local/bin/sync-media.sh --quiet /mnt/user/media/photos &> /dev/null
+# qnap-hardware: one temperature history sample a minute (HISTORY=yes on the Overview tab)
+* * * * * /usr/local/emhttp/plugins/qnap-hardware/scripts/qnaphw-sample >/dev/null 2>&1

@@ -1,0 +1,2 @@
+# qnap-hardware: one temperature history sample a minute (HISTORY=yes on the Overview tab)
+* * * * * /usr/local/emhttp/plugins/qnap-hardware/scripts/qnaphw-sample >/dev/null 2>&1

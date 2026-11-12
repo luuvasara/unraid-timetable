@@ -2,3 +2,5 @@
 40 4 * * * /usr/bin/run-parts /etc/cron.daily 1> /dev/null
 30 4 * * 0 /usr/bin/run-parts /etc/cron.weekly 1> /dev/null
 20 4 1 * * /usr/bin/run-parts /etc/cron.monthly 1> /dev/null
+# a copy of a plugin line, added by hand
+11 0 * * 1 /usr/local/emhttp/plugins/dynamix.plugin.manager/scripts/unraidcheck &> /dev/null

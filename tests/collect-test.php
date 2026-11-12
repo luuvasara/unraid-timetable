@@ -61,7 +61,9 @@ ok($mv['link'] === '/Settings/Scheduler' && $mv['tab'] === 'tab2', 'mover links 
 
 $ab = $by['Appdata backup'];
 ok(in_array('stops_containers', $ab['impact'], true) && in_array('array_io', $ab['impact'], true), 'appdata backup stops containers and writes to the array', $ab['impact']);
-ok(str_contains($ab['note'], 'Stops 1 of the 3 containers') && str_contains($ab['note'], '/mnt/user/backups/appdata'), 'appdata note', $ab['note']);
+ok(str_contains($ab['note'], '(of the 14 it lists), one after the other') && str_contains($ab['note'], '/mnt/user/backups/appdata'), 'appdata note', $ab['note']);
+ok(($ab['stops'] ?? null) === ['plex', 'sonarr', 'radarr', 'prowlarr', 'bazarr', 'homeassistant', 'nextcloud', 'photos', 'jellyfin', 'downloads', 'paperless', 'passwords'], 'appdata backup names the containers it stops, in its own order, without skipped and dontStop ones', $ab['stops'] ?? null);
+ok(str_contains($ab['note'], 'Stops 12 containers at 03:00: plex, sonarr, radarr, prowlarr, bazarr, homeassistant, nextcloud, photos (+4 more)'), 'appdata note lists the first names and the rest as a count', $ab['note']);
 ok($ab['duration']['sec'] === 3130 && $ab['duration']['basis'] === 'history', 'appdata duration from ab.log', $ab['duration']);
 
 $us = $by['User script: nightly-rsync'];
@@ -94,6 +96,43 @@ ok(TtAnalyse::pattern(array_map(fn($i) => strtotime('2026-11-09 03:40') + $i * 8
 ok($has('array-manual', 'parity-check', 'mover'), 'array not started at boot', $keys);
 ok($has('s3-sleep', 's3-sleep', 'mover') === false, 'mover at 03:40 is inside the excluded hours 02-04 of S3 Sleep', $keys);
 ok($has('s3-sleep', 's3-sleep', 'parity-check'), 'parity at 01:00 is outside the excluded hours', $keys);
+// new in 2026.11.12h
+$q = $by['QNAP Hardware: temperature history sample'] ?? null;
+ok($q && $q['owner'] === 'QNAP Hardware' && !empty($q['light']) && $q['link'] === '/Settings/QnapHW', 'qnaphw-sample is the QNAP Hardware history sampler', $titles);
+$fv = $by['FolderView Plus: scheduled folder backup'] ?? null;
+ok($fv && $fv['owner'] === 'FolderView Plus' && !empty($fv['light']) && str_contains($fv['description'] ?? '', 'flash drive'), 'scheduled_backup.php is FolderView Plus, says what it touches', $titles);
+ok(isset($by['System activity data (sysstat)']) && !empty($by['System activity data (sysstat)']['light']) && isset($by['System activity daily report (sysstat)']), 'sa1 and sa2 are sysstat', $titles);
+ok(($by['Scrub, pool ssd (btrfs)']['poolOp'] ?? '') === 'scrub' && ($by['Balance, pool ssd (btrfs)']['poolOp'] ?? '') === 'balance', 'pool jobs know whether they scrub or balance');
+ok($has('scrub-parity', 'parity-check', 'scrub-array-disk-disk3-btrfs'), 'disk3 scrub on Sunday 05:20 runs inside the first-Sunday check', $keys);
+$sp = array_values(array_filter($ws, fn($w) => $w['rule'] === 'scrub-parity' && $w['jobs'][1] === 'scrub-array-disk-disk3-btrfs'));
+ok($sp && $sp[0]['severity'] === 'warning', 'scrub during a parity check is a warning', $sp[0] ?? null);
+ok($has('s3-sleep-during-run', 's3-sleep', 'balance-pool-ssd-btrfs'), 'balance starts at 04:00 (sleep excluded) and still runs at 05:00 (sleep allowed)', $keys);
+ok(!$has('s3-sleep-during-run', 's3-sleep', 'mover'), 'mover 03:40-04:12 stays inside the excluded hours', $keys);
+$st = array_values(array_filter($ws, fn($w) => $w['rule'] === 'stale-live'));
+ok(count($st) === 1 && $st[0]['count'] === 2 && str_contains($st[0]['why'], 'hand-added-backup.sh') && str_contains($st[0]['why'], 'sync-media.sh'), 'two live lines with no schedule file on the flash drive, in one finding', $st);
+ok(!str_contains($st[0]['why'] ?? '', 'nutstats') && !str_contains($st[0]['why'] ?? '', 'qnaphw'), 'lines that have their .cron file are not stale', $st[0]['why'] ?? null);
+$du = array_values(array_filter($ws, fn($w) => $w['rule'] === 'duplicate'));
+ok(count($du) === 1 && str_contains($du[0]['title'], 'Unraid OS update check') && $du[0]['severity'] === 'info' && str_contains($du[0]['why'], '/var/spool/cron/crontabs/root'), 'the same light command in two crontabs is pointed out (info)', $du);
+$bpw = array_values(array_filter($ws, fn($w) => $w['rule'] === 'backup-parity'))[0] ?? null;
+ok($bpw && str_contains($bpw['why'], 'Stops 12 containers: plex, sonarr'), 'backup findings name the containers it stops', $bpw['why'] ?? null);
+$mpw = array_values(array_filter($ws, fn($w) => $w['rule'] === 'mover-parity' && $w['jobs'][0] === 'parity-check'))[0] ?? null;
+ok($mpw && str_contains($mpw['why'], 'not blocked') && str_contains($mpw['why'], 'Move button'), 'mover-parity says the scheduled mover is not blocked by a running check', $mpw['why'] ?? null);
+
+// Mover Tuning set not to move during a check (its default), with a check longer than a day on two days in a row
+$c2 = (new TtCollect(__DIR__ . '/fixtures/movertuning', $now))->collect();
+$j2 = $c2['jobs']; TtAnalyse::prepare($j2);
+$b2 = []; foreach ($j2 as $j) $b2[$j['id']] = $j;
+ok(($c2['context']['moverTuning']['parity'] ?? null) === 'no' && ($c2['context']['moverTuning']['version'] ?? null) === '2026.11.07', 'Mover Tuning: parity key from default.cfg when the saved cfg has none, version from its .plg', $c2['context']['moverTuning'] ?? null);
+ok(($b2['appdata-backup-2']['source']['file'] ?? '') === '/var/spool/cron/crontabs/root', 'a copy in the user crontab is attributed to that crontab, not to the plugin\'s .cron file', $b2['appdata-backup-2']['source'] ?? null);
+ok(!empty($b2['mover-mover-tuning']['skipsDuringCheck']), 'the Mover Tuning schedule skips during a check', $b2['mover-mover-tuning'] ?? array_keys($b2));
+$w2 = TtAnalyse::warnings($j2, $now, 35, $c2['context']);
+$k2 = array_map(fn($w) => $w['rule'] . ':' . implode(',', $w['jobs']), $w2);
+$r2 = []; foreach ($w2 as $w) $r2[$w['rule']][] = $w;
+ok(isset($r2['mover-parity']) && $r2['mover-parity'][0]['severity'] === 'info' && str_contains($r2['mover-parity'][0]['why'], 'Mover Tuning'), 'mover-parity is info when Mover Tuning skips the run, and says why', $r2['mover-parity'] ?? $k2);
+ok(isset($r2['mover-blocked-by-check']) && $r2['mover-blocked-by-check'][0]['severity'] === 'warning' && str_contains($r2['mover-blocked-by-check'][0]['title'], 'Mover (Mover Tuning)'), 'a check of over a day keeps the Mover Tuning mover from running', $k2);
+ok(isset($r2['parity-repeat']) && $r2['parity-repeat'][0]['severity'] === 'warning' && !isset($r2['self']), 'Sunday and Monday ticked with a 26 h check: parity-repeat, not self', $k2);
+ok(isset($r2['duplicate']) && $r2['duplicate'][0]['severity'] === 'warning' && !isset($r2['containers-twice']), 'the backup line in two crontabs is a warning, and its copy is not also a containers-twice pair', $k2);
+foreach ($w2 as $w) ok($w['why'] !== '' && str_starts_with($w['example'], 'Ex.') && $w['title'] !== '', "warning {$w['rule']} has title, reason, example (Mover Tuning example)");
 $mp = array_values(array_filter($ws, fn($w) => $w['rule'] === 'mover-parity'))[0];
 ok(date('Y-m-d H:i', $mp['window'][0]) === '2026-12-06 03:40', 'first overlap is on the first Sunday of December', date('Y-m-d H:i', $mp['window'][0]));
 $inc = array_values(array_filter($ws, fn($w) => in_array('parity-check-increment-parity-check-tuning', $w['jobs'], true) && $w['rule'] === 'mover-parity'));

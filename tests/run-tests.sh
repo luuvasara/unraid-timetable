@@ -9,6 +9,7 @@ if command -v shellcheck >/dev/null; then mapfile -t SH < <(cd "$HERE" && git ls
 php "$HERE/tests/unit.php" || fail=1
 php "$HERE/tests/collect-test.php" || fail=1
 php "$HERE/tests/render-test.php" || fail=1
+php "$HERE/tests/hostile-test.php" || fail=1
 I=$HERE/src/usr/local/emhttp/plugins/unraid-timetable/images/timetable.png
 if [ -s "$I" ] && grep -q 'icon="timetable.png"' "$HERE/unraid-timetable.plg" && grep -q '^Icon="timetable.png"' "$HERE/src/usr/local/emhttp/plugins/unraid-timetable/Timetable.page" && [ -s "$HERE/icon.png" ] && grep -q '/main/icon.png<' "$HERE/plugins/unraid-timetable.xml"; then echo "ok   icon wired into the .plg, the page and the template"; else echo "FAIL icon wiring"; fail=1; fi
 # read-only: no file writes, no exec of anything but reading, no POST handling in the shipped code

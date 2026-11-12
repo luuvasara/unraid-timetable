@@ -1,0 +1,2 @@
+# NUT UPS statistics
+*/5 * * * * /usr/local/emhttp/plugins/nut-dw/scripts/nutstats.sh &> /dev/null

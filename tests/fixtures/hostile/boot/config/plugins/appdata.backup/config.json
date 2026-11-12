@@ -1,0 +1,3 @@
+{"destination": ["/mnt/user/x"], "backupMethod": {"a": 1}, "defaults": "yes",
+ "containerOrder": "plex",
+ "containerSettings": {"<script>alert(4)</script>": {"skip": "no", "dontStop": "no"}, "quo\"te'name": {"skip": ["no"], "dontStop": "no"}, "bad": "string", "7": {"skip": "no"}}}

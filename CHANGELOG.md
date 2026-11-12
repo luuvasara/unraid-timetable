@@ -2,6 +2,15 @@
 
 Copied by the build from the <CHANGES> block of unraid-timetable.plg; edit the .plg, not this file.
 
+## 2026.11.12h
+- The mover finding now says that a running parity check does not stop the scheduled mover; only the Move button is greyed out.
+- With Mover Tuning set not to move during a parity check, an overlap is shown as a skipped mover run (information), and a warning appears when a check that runs for more than a day, or a check paused between nightly parts on older Mover Tuning versions, keeps the mover from running for days.
+- New warnings: a parity check set to start on days close together, so it starts again soon after it finishes; a pool or array-disk scrub or balance during a parity check; the same command in two crontabs, so it runs twice.
+- New information: a scrub and a balance of the same pool at once; a job that is still running when S3 Sleep may put the server to sleep; crontab lines that are in no schedule file on the flash drive and are gone after the next rebuild.
+- Appdata Backup names the containers it stops ("Stops 12 containers at 03:00: plex, sonarr, ... (+4 more)") in its row, its tooltip and its findings.
+- Recognised: the QNAP Hardware temperature history sample, the FolderView Plus scheduled folder backup, and sysstat's system activity data and daily report.
+- On today's timeline the "Now" label has its own strip above the hours, so it no longer covers an hour label.
+- Text read from other plugins' files is checked and escaped everywhere it is shown; settings of the wrong type are skipped, and very large logs are read only in part.
 ## 2026.11.12g
 - User scripts whose folder name has spaces showed as "scripts"; they now show their own name, also in tooltips. A script's description file is shown in its tooltip.
 - Pool maintenance has names: "Balance, pool ssd (btrfs)", "Scrub, pool ssd (btrfs)", "Scrub, pool tank (zfs)", with the options in words and a link to the pool's page. A btrfs scrub takes its length from the server's last scrub record.
