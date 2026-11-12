@@ -59,6 +59,10 @@ Where there is no history, the list says which length was assumed, and the timel
 
 The screenshots show example data.
 
+## Not covered yet
+
+Clock changes for daylight saving time. Unraid's cron (dcron 4.5) matches each line against the local wall clock, so a job set between about 02:00 and 04:00 can run twice on the night the clocks go back and not at all on the night they go forward (the exact hour depends on the time zone). Timetable draws every day as 24 hours and does not point this out yet. Until it does: keep jobs that must run exactly once a day outside that hour.
+
 ## Install
 
 Unraid 6.12 or later. In the Plugins tab, Install Plugin:
