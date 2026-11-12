@@ -26,6 +26,22 @@ foreach (['Parity check', 'Mover', 'TRIM', 'System monitor (notifications)', 'Un
           'User script: Note array start', 'User script: daily-report', 'Appdata backup', 'Docker auto update',
           'Parity check, increment (Parity Check Tuning)', 'Parity Check Tuning monitor', 'Log rotation', 'Fix Common Problems scan', 'S3 Sleep',
           'hand-added-backup.sh'] as $t) ok(isset($by[$t]), "collects \"$t\"", $titles);
+// folder names with spaces (Nightly photo sync) and a quoted path; a `name` file wins over the folder name
+ok(isset($by['User script: Nightly photo sync']) && !isset($by['User script: scripts']), 'user script folder with spaces keeps its full name', $titles);
+ok(($by['User script: Nightly photo sync']['description'] ?? '') === 'Copies new photos to the archive', 'description file read', $by['User script: Nightly photo sync'] ?? null);
+ok(isset($by['User script: Pretty name']) && ($by['User script: Pretty name']['script'] ?? '') === '/boot/config/plugins/user.scripts/scripts/named-folder/script', 'quoted path parsed, name file used', $titles);
+// pool and disk maintenance written by the Device page
+$bal = $by['Balance, pool ssd (btrfs)'] ?? null; $scr = $by['Scrub, pool ssd (btrfs)'] ?? null;
+ok($bal && $scr && isset($by['Scrub, pool tank (zfs)'], $by['Scrub, array disk disk3 (btrfs)']), 'balance and scrubs are named after their pool or disk', $titles);
+ok($bal && str_contains($bal['description'], 'only data blocks under 50% full') && $bal['link'] === '/Main/Device?name=ssd' && in_array('pool_io', $bal['impact'], true), 'balance options in words, link to the pool page', $bal);
+ok($scr && str_contains($scr['description'], 'read-only: reports errors without fixing them'), 'scrub -r in words', $scr['description'] ?? null);
+ok($scr && $scr['duration']['sec'] === 6300 && $scr['duration']['basis'] === 'history', 'scrub length from /var/lib/btrfs/scrub.status', $scr['duration'] ?? null);
+ok($bal && $bal['duration']['basis'] === 'default' && str_contains($bal['duration']['note'], 'assumed'), 'balance length is an assumption, said so', $bal['duration'] ?? null);
+ok(in_array('array_io', $by['Scrub, array disk disk3 (btrfs)']['impact'] ?? [], true), 'an array disk scrub touches the array');
+ok(($by['NUT UPS statistics (NUT plugin)']['category'] ?? '') === 'checks', 'NUT statistics named', $titles);
+ok(isset($by['Appdata Cleanup Plus: purge of quarantined folders']), 'scheduled-purge.php is Appdata Cleanup Plus', $titles);
+ok(isset($by['sync-media.sh photos']), 'unknown job names what it acts on', $titles);
+ok(!isset($by['btrfs_balance']) && !isset($by['btrfs_scrub']) && !isset($by['zfs_scrub']), 'no bare script names for known scripts', $titles);
 ok(!isset($by['/usr/local/bin/my-own-thing --quiet']), 'a .cron file that is not in the live crontab is not a job (update_cron did not load it)');
 
 $pc = $by['Parity check'];
@@ -70,6 +86,11 @@ ok($has('backup-parity', 'parity-check', 'appdata-backup'), 'backup inside the p
 ok($has('containers-twice', 'appdata-backup', 'docker-auto-update'), 'backup and docker update both stop containers at 03:00 Sunday', $keys);
 ok($has('trim-parity', 'parity-check', 'trim'), 'TRIM at 04:00 Sunday inside the check', $keys);
 ok($has('same-start', 'mover', 'user-script-nightly-rsync'), 'user script at the mover\'s minute on Wednesdays', $keys);
+ok($has('pool-mover', 'mover', 'balance-pool-ssd-btrfs'), 'balance overlaps the mover, finding names the pool', $keys);
+$pm = array_values(array_filter($ws, fn($w) => $w['rule'] === 'pool-mover'));
+ok($pm && str_contains(implode(' ', array_column($pm, 'title')), 'pool ssd'), 'finding title carries the pool name', array_column($pm, 'title'));
+ok(TtAnalyse::pattern(array_map(fn($i) => strtotime('2026-11-09 00:17') + $i * 3600, range(0, 24 * 35 - 1)), 35) === 'every hour, at :17', 'hourly starts become a pattern');
+ok(TtAnalyse::pattern(array_map(fn($i) => strtotime('2026-11-09 03:40') + $i * 86400, range(0, 34)), 35) === 'every day at 03:40', 'daily starts become a pattern');
 ok($has('array-manual', 'parity-check', 'mover'), 'array not started at boot', $keys);
 ok($has('s3-sleep', 's3-sleep', 'mover') === false, 'mover at 03:40 is inside the excluded hours 02-04 of S3 Sleep', $keys);
 ok($has('s3-sleep', 's3-sleep', 'parity-check'), 'parity at 01:00 is outside the excluded hours', $keys);

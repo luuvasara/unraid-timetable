@@ -1,0 +1,2 @@
+/dev/nvme0n1p1 /mnt/ssd btrfs rw,noatime 0 0
+/dev/md3p1 /mnt/disk3 btrfs rw 0 0

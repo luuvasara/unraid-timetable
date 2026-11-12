@@ -1,0 +1,2 @@
+# Generated zfs scrub tank schedule:
+30 1 1 * * /usr/local/emhttp/plugins/dynamix/scripts/zfs_scrub start tank &> /dev/null

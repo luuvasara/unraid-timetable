@@ -208,8 +208,15 @@ final class TtCollect
             ['#ca\.mover\.tuning/mover\.php force start#', ['title' => 'Mover, forced move (Mover Tuning)', 'owner' => 'Mover Tuning', 'category' => 'mover', 'impact' => ['array_io', 'pool_io', 'wakes_disks', 'needs_array'], 'link' => $sch]],
             ['#ca\.mover\.tuning/mover start#', ['title' => 'Mover (Mover Tuning)', 'owner' => 'Mover Tuning', 'category' => 'mover', 'impact' => ['array_io', 'pool_io', 'wakes_disks', 'needs_array'], 'link' => $sch]],
             ['#ca\.mover\.tuning/age_mover watchdog#', ['title' => 'Mover Tuning cache watchdog', 'owner' => 'Mover Tuning', 'category' => 'checks', 'impact' => [], 'link' => $sch, 'light' => true]],
+            // Pool and disk maintenance written by the Device page (unraid/webgui DeviceInfo.page:1192 balance, :1308 btrfs scrub, :1530 zfs scrub)
+            ['#dynamix/scripts/(btrfs_balance|btrfs_scrub|zfs_scrub)\s+start\s+(\S+)([^&>|]*)#', ['title' => 'Pool maintenance', 'owner' => 'Unraid', 'category' => 'pool', 'impact' => ['pool_io', 'needs_array'], 'link' => null, 'poolJob' => true]],
+            // Appdata Cleanup Plus (alexphillips-dev/Appdata-Cleanup-Plus): its timer runs scheduled-purge.php, which purges quarantined appdata folders
+            ['#scheduled-purge\.php#', ['title' => 'Appdata Cleanup Plus: purge of quarantined folders', 'owner' => 'Appdata Cleanup Plus', 'category' => 'checks', 'impact' => [], 'light' => true, 'link' => null,
+                'description' => 'Deletes the appdata folders that Appdata Cleanup Plus put in quarantine, once their retention time has passed.']],
+            // NUT UPS statistics (NUT plugin, nutstats.cron)
+            ['#nutstats#', ['title' => 'NUT UPS statistics (NUT plugin)', 'owner' => 'NUT plugin', 'category' => 'checks', 'impact' => [], 'link' => null, 'light' => true]],
             // User Scripts (Squidly271/user.scripts, exec.php:152-159)
-            ['#user\.scripts/startCustom\.php\s+(\S+)#', ['title' => 'User script', 'owner' => 'User Scripts', 'category' => 'scripts', 'impact' => ['unknown'], 'link' => '/Settings/Userscripts', 'userScript' => true]],
+            ['#user\.scripts/startCustom\.php\s+(?:"([^"]+)"|\'([^\']+)\'|(.+?/script)(?=\s+(?:\d?>|&>|\|)|\s*$)|(\S+))#', ['title' => 'User script', 'owner' => 'User Scripts', 'category' => 'scripts', 'impact' => ['unknown'], 'link' => '/Settings/Userscripts', 'userScript' => true]],
             // Appdata Backup (Commifreak/unraid-appdata.backup, ABSettings.php:284-304)
             ['#appdata\.backup(\.beta)?/scripts/backup\.php#', ['title' => 'Appdata backup', 'owner' => 'Appdata Backup', 'category' => 'backup', 'impact' => ['stops_containers', 'pool_io', 'needs_array'], 'link' => '/Settings/AB.Main', 'appdata' => true]],
             // CA Auto Update Applications (exec.php:79-122)
@@ -224,9 +231,10 @@ final class TtCollect
         foreach ($rules as [$re, $job]) {
             if (!preg_match($re, $cmd, $m)) continue;
             if (str_contains($job['title'], '%1$s')) $job['title'] = sprintf($job['title'], $m[1]);
-            if (!empty($job['userScript'])) $job = $this->userScriptJob($job, $m[1]);
+            if (!empty($job['userScript'])) $job = $this->userScriptJob($job, (string)(($m[1] ?? '') ?: ($m[2] ?? '') ?: ($m[3] ?? '') ?: ($m[4] ?? '')));
+            if (!empty($job['poolJob'])) $job = $this->poolJob($job, $m[1], trim($m[2], '"\''), trim($m[3]));
             if (!empty($job['appdata'])) $job = $this->appdataJob($job, $cmd);
-            unset($job['userScript'], $job['appdata']);
+            unset($job['userScript'], $job['appdata'], $job['poolJob']);
             return $job;
         }
         return ['title' => self::cmdName($cmd), 'owner' => 'Other (from ' . ($plugin !== null ? "plugin folder $plugin" : $this->curFile) . ')', 'category' => 'other', 'impact' => ['unknown'], 'link' => null];
@@ -285,11 +293,72 @@ final class TtCollect
         }
     }
 
+    /** A btrfs balance, btrfs scrub or zfs scrub the Device page scheduled: names the pool or disk and spells out its options.
+     *  The scripts take "start <mountpoint or pool> [options]" (scripts/btrfs_balance, btrfs_scrub, zfs_scrub). */
+    private function poolJob(array $job, string $script, string $target, string $opts): array
+    {
+        $zfs = $script === 'zfs_scrub';
+        $name = $zfs ? $target : basename($target);   // /mnt/ssd -> ssd
+        $disk = (bool)preg_match('/^disk\d+$/', $name);
+        $what = $script === 'btrfs_balance' ? 'Balance' : 'Scrub';
+        $job['title'] = $what . ', ' . ($disk ? "array disk $name" : "pool $name") . ' (' . ($zfs ? 'zfs' : 'btrfs') . ')';
+        $job['pool'] = $name;
+        $job['link'] = '/Main/Device?name=' . rawurlencode($name);
+        if ($disk) $job['impact'] = ['array_io', 'wakes_disks', 'needs_array'];
+        $words = [];
+        foreach (preg_split('/\s+/', $opts, -1, PREG_SPLIT_NO_EMPTY) as $o) {
+            if (preg_match('/^-(d|m|s)usage=(\d+)$/', $o, $m)) $words[] = 'only ' . ['d' => 'data', 'm' => 'metadata', 's' => 'system'][$m[1]] . " blocks under $m[2]% full";
+            elseif ($o === '--full-balance') $words[] = 'all blocks (a full balance)';
+            elseif ($o === '-r') $words[] = 'read-only: reports errors without fixing them';
+            elseif ($o === '-B') $words[] = 'runs in the foreground';
+            elseif ($o === '-d') $words[] = 'statistics per device';
+            else $words[] = $o;
+        }
+        if ($script === 'btrfs_balance' && !$words) $words[] = 'all blocks (a full balance)';
+        $lead = ['btrfs_balance' => "Rewrites the blocks of $target to even out the space", 'btrfs_scrub' => "Reads all data and metadata of $target and checks it against its checksums",
+            'zfs_scrub' => "Reads every block of the pool and checks it against its checksums, repairing from redundant copies"][$script];
+        $job['description'] = $lead . ($words ? ': ' . implode(', ', $words) : '') . '.';
+        if ($script === 'btrfs_scrub') $job['mount'] = $target;
+        return $job;
+    }
+
+    /** The last btrfs scrub of a filesystem, from /var/lib/btrfs/scrub.status.<fsid> (btrfs-progs cmds/scrub.c: one line
+     *  "<fsid>:<devid>|key:value|..." per device with duration, canceled, finished). The file is matched to the mount
+     *  through /proc/mounts and the devices in /sys/fs/btrfs/<fsid>/devices; nothing is run. */
+    private function btrfsScrubSeconds(string $mount): ?int
+    {
+        $dev = null;
+        foreach (preg_split('/\R/', (string)$this->read('/proc/mounts')) as $l) {
+            $f = preg_split('/\s+/', $l);
+            if (($f[1] ?? '') === $mount && ($f[2] ?? '') === 'btrfs') { $dev = $f[0]; break; }
+        }
+        if ($dev === null) return null;
+        $real = @realpath($this->p($dev));
+        $names = array_unique([basename($dev), basename($real !== false ? $real : $dev)]);
+        foreach (glob($this->p('/var/lib/btrfs/scrub.status.*')) ?: [] as $f) {
+            $uuid = substr(basename($f), strlen('scrub.status.'));
+            $members = @scandir($this->p("/sys/fs/btrfs/$uuid/devices")) ?: [];
+            if (!array_intersect($names, $members)) continue;
+            $sec = 0; $ok = false;
+            foreach (preg_split('/\R/', (string)file_get_contents($f)) as $l) {
+                if (!str_contains($l, '|duration:')) continue;
+                $kv = [];
+                foreach (explode('|', $l) as $part) if (str_contains($part, ':') && !str_contains(explode(':', $part)[0], '-')) { [$k, $v] = explode(':', $part, 2); $kv[$k] = $v; }
+                if (($kv['finished'] ?? '0') !== '1' || ($kv['canceled'] ?? '0') !== '0') return null;
+                $sec = max($sec, (int)($kv['duration'] ?? 0)); $ok = true;
+            }
+            return $ok ? $sec : null;
+        }
+        return null;
+    }
+
     private function userScriptJob(array $job, string $path): array
     {
         $dir = dirname($path);
         $name = trim((string)$this->read("$dir/name")) ?: basename($dir);
         $job['title'] = "User script: $name";
+        $desc = trim((string)$this->read("$dir/description"));
+        if ($desc !== '') $job['description'] = mb_strimwidth(preg_replace('/\s+/', ' ', $desc), 0, 300, '...');
         $job['script'] = $path;
         $job['logFolder'] = basename($dir);
         return $job;
@@ -404,6 +473,12 @@ final class TtCollect
                     break;
                 case 'update':
                     $j['duration'] = ($j['title'] === 'Docker auto update' ? $docker : null) ?? ['sec' => 900, 'basis' => 'default', 'note' => 'no run in the system log; assumed 15 minutes'];
+                    break;
+                case 'pool':
+                    $m = !empty($j['mount']) ? $this->btrfsScrubSeconds($j['mount']) : null;
+                    $j['duration'] = $m !== null
+                        ? ['sec' => max(60, $m), 'basis' => 'history', 'samples' => 1, 'note' => 'the last finished scrub of this pool (/var/lib/btrfs/scrub.status)']
+                        : ['sec' => 7200, 'basis' => 'default', 'note' => (str_starts_with($j['title'], 'Balance') ? 'a balance leaves no run time on the server' : 'no finished scrub on record for this pool') . '; assumed 2 hours (it takes as long as there is data to read or move)'];
                     break;
                 case 'trim':
                     $j['duration'] = ['sec' => 600, 'basis' => 'default', 'note' => 'TRIM leaves no start and end in the log; assumed 10 minutes'];
@@ -566,11 +641,21 @@ final class TtCollect
     private static function cmdName(string $cmd): string
     {
         $c = preg_replace('/\s*(\d?>|&>|\|).*$/s', '', $cmd);
-        foreach (preg_split('/\s+/', trim((string)$c)) as $w) {
-            if ($w === '' || in_array($w, ['root', 'nobody', 'nice', 'ionice', 'sudo'], true) || preg_match('/^-/', $w)) continue;
-            if (preg_match('#(^|/)(php|bash|sh|python3?|perl|env)$#', $w)) continue;
-            if (str_contains($w, '/')) return basename($w);
-            return mb_strimwidth($w, 0, 60, '...');
+        $w = preg_split('/\s+/', trim((string)$c), -1, PREG_SPLIT_NO_EMPTY);
+        foreach ($w as $i => $x) {
+            if (in_array($x, ['root', 'nobody', 'nice', 'ionice', 'sudo'], true) || preg_match('/^-/', $x)) continue;
+            if (preg_match('#(^|/)(php|bash|sh|python3?|perl|env)$#', $x)) continue;
+            $name = str_contains($x, '/') ? basename($x) : mb_strimwidth($x, 0, 60, '...');
+            // what it acts on: the first path (its last part), else the first word that is not an option
+            $arg = null; $word = null;
+            foreach (array_slice($w, $i + 1) as $a) {
+                $a = trim($a, '"\'');
+                if ($a === '' || $a[0] === '-') continue;
+                if (str_contains($a, '/')) { $arg = basename(rtrim($a, '/')); break; }
+                $word ??= $a;
+            }
+            $arg ??= $word;
+            return $arg !== null && $arg !== '' ? mb_strimwidth("$name $arg", 0, 80, '...') : $name;
         }
         return self::shortCmd($cmd);
     }

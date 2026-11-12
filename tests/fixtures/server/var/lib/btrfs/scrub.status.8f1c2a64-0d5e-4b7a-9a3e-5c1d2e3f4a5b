@@ -1,0 +1,2 @@
+scrub status:1
+8f1c2a64-0d5e-4b7a-9a3e-5c1d2e3f4a5b:1|data_extents_scrubbed:100|tree_extents_scrubbed:10|data_bytes_scrubbed:1000|tree_bytes_scrubbed:100|read_errors:0|csum_errors:0|verify_errors:0|no_csum:0|csum_discards:0|super_errors:0|malloc_errors:0|uncorrectable_errors:0|corrected_errors:0|last_physical:1000|t_start:1790000000|t_resumed:0|duration:6300|canceled:0|finished:1

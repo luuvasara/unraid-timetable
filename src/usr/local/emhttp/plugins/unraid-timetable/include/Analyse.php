@@ -27,7 +27,8 @@ final class TtAnalyse
                 $s['parsed'] = TtCron::parse($s['expr']);
                 $s['perDay'] = TtCron::runsPerRunDay($s['parsed']);
                 $s['text'] ??= TtCron::describe($s['parsed'], $s['guard'] ?? null, $s['macro'] ?? null);
-                $j['frequent'] = $s['perDay'] > self::FREQUENT;
+                // a short job that runs more than hourly is a strip; a heavy one up to every 30 minutes still gets its bars, so overlaps with it are found
+                $j['frequent'] = $s['perDay'] > self::FREQUENT && !(self::heavy($j) && $s['perDay'] <= 2 * self::FREQUENT);
             } catch (InvalidArgumentException $e) {
                 $s['error'] = $e->getMessage();
                 $s['text'] = 'cannot be read: ' . $e->getMessage();
@@ -75,8 +76,9 @@ final class TtAnalyse
         $warn = [];
         $add = function (string $rule, string $a, string $b, int $s, int $e) use (&$warn) {
             $k = "$rule|$a|$b";
-            if (!isset($warn[$k])) $warn[$k] = ['rule' => $rule, 'jobs' => [$a, $b], 'window' => [$s, $e], 'count' => 0];
+            if (!isset($warn[$k])) $warn[$k] = ['rule' => $rule, 'jobs' => [$a, $b], 'window' => [$s, $e], 'count' => 0, 'starts' => []];
             $warn[$k]['count']++;
+            $warn[$k]['starts'][] = $s;
         };
         foreach (self::overlaps($win, $byId) as [$rule, $a, $b, $s, $e]) $add($rule, $a, $b, $s, $e);
         // starts in the same minute: a job of unknown weight next to a heavy one
@@ -101,8 +103,9 @@ final class TtAnalyse
             for ($k = $i; $k < $n && $starts[$k][1] - $starts[$i][1] <= self::CLUSTER_SPAN; $k++) $ids[$starts[$k][0]] = true;
             if (count($ids) >= self::CLUSTER_MIN) {
                 $key = implode(',', array_keys($ids)) . '@' . date('H:i', $starts[$i][1]);
-                $clusters[$key] ??= ['rule' => 'cluster', 'jobs' => array_keys($ids), 'window' => [$starts[$i][1], $starts[$i][1] + self::CLUSTER_SPAN], 'count' => 0];
+                $clusters[$key] ??= ['rule' => 'cluster', 'jobs' => array_keys($ids), 'window' => [$starts[$i][1], $starts[$i][1] + self::CLUSTER_SPAN], 'count' => 0, 'starts' => []];
                 $clusters[$key]['count']++;
+                $clusters[$key]['starts'][] = $starts[$i][1];
                 while ($i + 1 < $n && $starts[$i + 1][1] - $starts[$i][1] <= self::CLUSTER_SPAN) $i++;
             }
         }
@@ -146,7 +149,11 @@ final class TtAnalyse
             }
             if ($hit) $out[] = ['rule' => 's3-sleep', 'jobs' => array_merge([$s3['id']], array_keys($hit)), 'window' => null, 'count' => count($hit)];
         }
-        foreach ($out as &$w) self::explain($w, $byId);
+        foreach ($out as &$w) {
+            self::explain($w, $byId);
+            if (!empty($w['starts']) && $w['count'] > 6) $w['pattern'] = self::pattern($w['starts'], $days);
+            unset($w['starts']);
+        }
         unset($w);
         $sev = ['warning' => 0, 'info' => 1];
         usort($out, fn($a, $b) => ($sev[$a['severity']] <=> $sev[$b['severity']]) ?: (($a['window'][0] ?? PHP_INT_MAX) <=> ($b['window'][0] ?? PHP_INT_MAX)));
@@ -180,7 +187,7 @@ final class TtAnalyse
      *  is unfinished) lower a warning to info. */
     public static function severity(string $rule, array $a, array $b): string
     {
-        $info = ['trim-parity', 'mover-mover', 'overlap-any', 'same-start', 'cluster', 'spinup', 's3-sleep'];
+        $info = ['trim-parity', 'mover-mover', 'overlap-any', 'same-start', 'cluster', 'spinup', 's3-sleep', 'pool-mover', 'pool-backup'];
         if (in_array($rule, $info, true) || !empty($a['conditional']) || !empty($b['conditional'])) return 'info';
         return 'warning';
     }
@@ -211,6 +218,9 @@ final class TtAnalyse
             'backup+update' => 'containers-twice', 'update+update' => 'containers-twice', 'backup+backup' => 'containers-twice'];
         // a parity check and its own pause/resume window are one check, not two
         if ($pair === 'parity+parity' && (!empty($a['conditional']) || !empty($b['conditional']))) return null;
+        if ($pair === 'pool+pool' && ($a['pool'] ?? 'a') === ($b['pool'] ?? 'b')) return 'pool-pool';
+        if ($pair === 'mover+pool') return 'pool-mover';
+        if ($pair === 'backup+pool') return 'pool-backup';
         if (isset($map[$pair])) return $map[$pair];
         if (self::has($a, 'stops_containers') && self::has($b, 'stops_containers')) return 'containers-twice';
         if (self::has($a, 'array_io') && self::has($b, 'array_io')) return 'overlap-any';
@@ -220,7 +230,7 @@ final class TtAnalyse
     /** Which job is named first in a pair warning: the heavier, then the one with the lower id. */
     private static function order(array $a, array $b): array
     {
-        $rank = ['parity' => 0, 'backup' => 1, 'mover' => 2, 'update' => 3, 'trim' => 4];
+        $rank = ['parity' => 0, 'backup' => 1, 'mover' => 2, 'update' => 3, 'trim' => 4, 'pool' => 5];
         $ra = $rank[$a['category']] ?? 9; $rb = $rank[$b['category']] ?? 9;
         if ($ra === $rb) return strcmp($a['id'], $b['id']) <= 0 ? [$a['id'], $b['id']] : [$b['id'], $a['id']];
         return $ra < $rb ? [$a['id'], $b['id']] : [$b['id'], $a['id']];
@@ -255,6 +265,15 @@ final class TtAnalyse
             'overlap-any' => ['info', '%1$s and %2$s overlap',
                 'Both read or write the array disks, so each slows the other down.',
                 'Ex. spread them out if either feels slow.'],
+            'pool-pool' => ['warning', '%1$s and %2$s run on the same disks at the same time',
+                'A balance and a scrub of the same pool cannot run together (btrfs refuses the second), and two scrubs or balances at once read and rewrite the same disks, so each takes far longer.',
+                'Ex. give the scrub and the balance of one pool their own nights.'],
+            'pool-mover' => ['info', '%1$s overlaps %2$s',
+                'The mover writes to the pools and disks that hold the shares it moves; if it uses this pool or disk, the pool maintenance and the mover slow each other down.',
+                'Ex. run the pool job on a night the mover has little to move.'],
+            'pool-backup' => ['info', '%1$s overlaps %2$s',
+                'The backup stops containers and copies appdata, usually kept on a pool; if it is this pool, the backup takes longer and the containers stay down longer.',
+                'Ex. start the backup after the pool job has finished.'],
             'self' => ['warning', '%1$s can still be running when its next run starts',
                 'Its runs take longer than the time between them; the next run then either waits, is skipped, or runs twice at once, depending on the job.',
                 'Ex. run it less often, or check whether its runs really take this long.'],
@@ -286,11 +305,27 @@ final class TtAnalyse
         $w['why'] = sprintf($why, '', '', 0, 0, $spin, $loc, $w['file']['why'] ?? '');
         $w['example'] = $ex;
         foreach ($w['jobs'] as $id) {
-            if (!empty($byId[$id]['conditional']) && $w['severity'] === 'warning' && $w['rule'] !== 'array-manual') {
-                $w['severity'] = 'info';
+            if (!empty($byId[$id]['conditional']) && $w['rule'] !== 'array-manual') {
+                if ($w['severity'] === 'warning') $w['severity'] = 'info';
                 $w['why'] .= ' ' . $byId[$id]['title'] . ': ' . strtolower($byId[$id]['conditional'][0]) . substr($byId[$id]['conditional'], 1);
             }
         }
+    }
+
+    /** The pattern in a long list of start times, in words: ex. 24 starts a day at :17 -> "every hour, at :17"; null when
+     *  there is no simple pattern (the caller then falls back to the count). Hundreds of "more times" say less than this. */
+    public static function pattern(array $starts, int $days): ?string
+    {
+        $min = []; $hour = []; $day = [];
+        foreach ($starts as $t) { $min[date('i', $t)] = 1; $hour[date('G', $t)] = 1; $day[date('Y-m-d', $t)] = 1; }
+        if (count($min) !== 1) return null;
+        $m = array_key_first($min);
+        if (count($hour) === 24) return "every hour, at :$m";
+        $hs = array_keys($hour); sort($hs);
+        $at = implode(', ', array_map(fn($h) => sprintf('%02d:%s', $h, $m), $hs));
+        if (count($hour) <= 6 && count($day) >= 0.8 * $days) return "every day at $at";
+        if (count($hour) <= 6) return "on " . count($day) . " of the next $days days, at $at";
+        return null;
     }
 
     private static function spinWords(int $v): string

@@ -11,7 +11,7 @@ final class TtView
 {
     public const CATS = [
         'parity' => ['Parity check', 1], 'mover' => ['Mover', 2], 'backup' => ['Backup', 3], 'update' => ['Updates', 4],
-        'scripts' => ['User Scripts', 5], 'trim' => ['TRIM', 6], 'checks' => ['Checks and reports', 7],
+        'scripts' => ['User Scripts', 5], 'trim' => ['TRIM', 6], 'pool' => ['Pool maintenance', 7], 'checks' => ['Checks and reports', 8],
         'other' => ['Other', 0], 'sleep' => ['Sleep', 0],
     ];
     /** Settings pages of other plugins, shown as links only when that plugin is installed. */
@@ -71,6 +71,12 @@ final class TtView
     public function dayTime(int $t): string
     {
         return date('D j M', $t) . ' ' . $this->time($t);
+    }
+
+    /** Row-label tooltip: the title, plus a User Script's own description when it has one. */
+    private static function tip(array $j): string
+    {
+        return $j['title'] . (!empty($j['description']) ? ': ' . $j['description'] : '');
     }
 
     public static function dur(int $sec): string
@@ -152,7 +158,7 @@ final class TtView
             $o .= '<li class="tt-f tt-f-' . $sev . '"><span class="tt-sev"><i class="fa fa-' . ($sev === 'warning' ? 'exclamation-triangle' : 'info-circle') . '" aria-hidden="true"></i> ' . ($sev === 'warning' ? 'Warning' : 'Info') . '</span>';
             $o .= '<div class="tt-fbody"><p class="tt-ftitle">' . self::h($w['title']) . '</p>';
             if ($w['window']) {
-                $more = $w['count'] > 1 ? sprintf(', and %d more time%s in the next %d days', $w['count'] - 1, $w['count'] > 2 ? 's' : '', self::HORIZON_DAYS) : '';
+                $more = !empty($w['pattern']) ? ', then ' . $w['pattern'] : ($w['count'] > 1 ? sprintf(', and %d more time%s in the next %d days', $w['count'] - 1, $w['count'] > 2 ? 's' : '', self::HORIZON_DAYS) : '');
                 if ($w['rule'] === 'cluster') $o .= '<p class="tt-when">From ' . self::h($this->dayTime($w['window'][0])) . self::h($more) . '</p>';
                 else $o .= '<p class="tt-when">Next: ' . self::h($this->dayTime($w['window'][0])) . '&ndash;' . self::h($this->time($w['window'][1])) . ' (' . self::h(self::dur($w['window'][1] - $w['window'][0])) . ')' . self::h($more) . '</p>';
             }
@@ -227,14 +233,14 @@ final class TtView
             $o .= '<div class="tt-grp"><span class="tt-sw tt-c-' . $cat . '"></span>' . self::h(self::CATS[$cat][0]) . '</div>';
             foreach ($rows[$cat] as $id => $ws) {
                 $j = $m['byId'][$id];
-                $o .= '<div class="tt-lab" title="' . self::h($j['title']) . '">' . self::h($j['title']) . '</div><div class="tt-track" role="list" aria-label="' . self::h($j['title']) . '">';
+                $o .= '<div class="tt-lab" title="' . self::h(self::tip($j)) . '">' . self::h($j['title']) . '</div><div class="tt-track" role="list" aria-label="' . self::h($j['title']) . '">';
                 foreach ($ws as [$s, $e]) {
                     $basis = $j['duration']['basis'] ?? 'default';
                     $kind = $basis === 'unknown' ? 'tt-unk' : (in_array($basis, ['history', 'config'], true) ? 'tt-known' : 'tt-est');
                     $sev = null;
                     foreach ($conflictIds[$id] ?? [] as [$cs, $ce, $cv]) if ($cs < $e && $ce > $s) $sev = ($sev === 'warning' || $cv === 'warning') ? 'warning' : 'info';
                     $cut = ($s < $ds ? ' tt-cutl' : '') . ($e > $de ? ' tt-cutr' : '');
-                    $aria = $j['title'] . ', ' . $this->time($s) . ' to ' . $this->time($e) . ' (' . self::dur($e - $s) . ', ' . ($kind === 'tt-known' ? 'measured' : ($kind === 'tt-est' ? 'estimated' : 'length unknown')) . ')' . ($sev ? ", overlaps another job, $sev" : '');
+                    $aria = $j['title'] . (!empty($j['description']) ? ' (' . $j['description'] . ')' : '') . ', ' . $this->time($s) . ' to ' . $this->time($e) . ' (' . self::dur($e - $s) . ', ' . ($kind === 'tt-known' ? 'measured' : ($kind === 'tt-est' ? 'estimated' : 'length unknown')) . ')' . ($sev ? ", overlaps another job, $sev" : '');
                     $o .= '<span role="listitem" class="tt-bar tt-c-' . self::catOf($j) . " $kind$cut" . ($sev ? " tt-hit tt-hit-$sev" : '') . '" style="left:' . $pct($s) . '%;width:' . max(0.45, $pct($e) - $pct($s)) . '%" title="' . self::h($aria) . '" aria-label="' . self::h($aria) . '">'
                         . ($sev ? '<i class="fa fa-' . ($sev === 'warning' ? 'exclamation-triangle' : 'info-circle') . '" aria-hidden="true"></i>' : '') . '</span>';
                 }
@@ -244,8 +250,8 @@ final class TtView
         if ($freq) $o .= '<div class="tt-grp">Runs all day</div>';
         foreach ($freq as $j) {
             $n = $j['schedule']['perDay'];
-            $o .= '<div class="tt-lab" title="' . self::h($j['title']) . '"><span class="tt-sw tt-c-' . self::catOf($j) . '"></span>' . self::h($j['title']) . '</div>';
-            $o .= '<div class="tt-track"><span class="tt-dense tt-c-' . self::catOf($j) . '" role="img" aria-label="' . self::h($j['title'] . ', ' . $j['schedule']['text'] . ", $n runs a day") . '"></span><span class="tt-densel">' . self::h($j['schedule']['text'] . ", $n a day") . '</span></div>';
+            $o .= '<div class="tt-lab" title="' . self::h(self::tip($j)) . '"><span class="tt-sw tt-c-' . self::catOf($j) . '"></span>' . self::h($j['title']) . '</div>';
+            $o .= '<div class="tt-track"><span class="tt-dense tt-c-' . self::catOf($j) . '" role="img" aria-label="' . self::h(self::tip($j) . ', ' . $j['schedule']['text'] . ", $n runs a day") . '"></span><span class="tt-densel">' . self::h($j['schedule']['text'] . ", $n a day") . '</span></div>';
         }
         return $o . '</div></div></section>';
     }
@@ -334,6 +340,7 @@ final class TtView
             $len = $s['type'] === 'cron' && !empty($j['frequent']) ? 'short, runs ' . $s['perDay'] . ' times a day' : (isset($j['duration']) && in_array($s['type'], ['cron'], true) ? self::dur($j['duration']['sec']) . ' (' . ($j['duration']['basis'] === 'history' ? 'measured' : ($j['duration']['basis'] === 'config' ? 'from its settings' : 'assumed')) . ')' : '');
             $src = $j['source']['file'] . ($j['source']['line'] ? ':' . $j['source']['line'] : '');
             $o .= '<tr class="tt-row-' . self::catOf($j) . '"><td data-h="Job"><span class="tt-sw tt-c-' . self::catOf($j) . '"></span><strong>' . self::h($j['title']) . '</strong><br><span class="tt-muted">' . self::h($j['owner']) . '</span>'
+                . (!empty($j['description']) ? '<br><span class="tt-muted">' . self::h($j['description']) . '</span>' : '')
                 . (!empty($j['note']) ? '<br><span class="tt-muted">' . self::h($j['note']) . '</span>' : '')
                 . (!empty($j['conditional']) ? '<br><span class="tt-muted">' . self::h($j['conditional']) . '</span>' : '') . '</td>'
                 . '<td data-h="When">' . self::h($when) . (!empty($s['expr']) && $s['type'] === 'cron' ? '<br><code>' . self::h($s['expr']) . '</code>' : '') . '</td>'

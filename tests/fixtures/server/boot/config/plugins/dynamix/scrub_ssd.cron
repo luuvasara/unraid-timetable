@@ -1,0 +1,2 @@
+# Generated btrfs scrub ssd schedule:
+0 2 23 * * /usr/local/emhttp/plugins/dynamix/scripts/btrfs_scrub start /mnt/ssd -r &> /dev/null

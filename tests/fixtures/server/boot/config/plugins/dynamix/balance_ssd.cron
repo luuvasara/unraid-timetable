@@ -1,0 +1,2 @@
+# Generated btrfs balance ssd schedule:
+0 4 18 * * /usr/local/emhttp/plugins/dynamix/scripts/btrfs_balance start /mnt/ssd -dusage=50 &> /dev/null

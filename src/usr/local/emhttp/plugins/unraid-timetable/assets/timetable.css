@@ -45,7 +45,7 @@
   .tt .tt-c-backup { --tt-fill: var(--tt-p-aqua); --tt-edge: var(--tt-p-aqua-o); }
   .tt .tt-c-update { --tt-fill: var(--tt-p-yellow); --tt-edge: var(--tt-p-yellow-o); }
   .tt .tt-c-scripts { --tt-fill: var(--tt-p-magenta); --tt-edge: var(--tt-p-magenta-o); }
-  .tt .tt-c-trim { --tt-fill: var(--tt-p-green); --tt-edge: var(--tt-p-green-o); }
+  .tt .tt-c-trim, .tt .tt-c-pool { --tt-fill: var(--tt-p-green); --tt-edge: var(--tt-p-green-o); }
   .tt .tt-c-checks { --tt-fill: var(--tt-p-violet); --tt-edge: var(--tt-p-violet-o); }
   .tt .tt-c-other, .tt .tt-c-sleep { --tt-fill: var(--tt-p-grey); --tt-edge: var(--tt-p-grey-o); }
 
